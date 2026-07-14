@@ -13,6 +13,11 @@ export const THEMES = {
   light:      { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' },
   midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
   paper:      { bg:'#faf8f5', fg:'#3b3836', panel:'#ffffff', border:'#d5d0c8', red:'#c5ac4a' },
+  // Catppuccin themes
+  catppuccin-latte:   { bg:"#eff1f5", fg:"#4c4f69", panel:"#e6e9ef", border:"#ccd0da", red:"#d20f39" },
+  catppuccin-frappe:  { bg:"#303446", fg:"#c6d0f5", panel:"#292c3c", border:"#414559", red:"#e78284" },
+  catppuccin-macchiato: { bg:"#24273a", fg:"#cad3f5", panel:"#1e2030", border:"#363a4f", red:"#ed8796" },
+  catppuccin-mocha:   { bg:"#1e1e2e", fg:"#cdd6f4", panel:"#181825", border:"#45475a", red:"#f38ba8" },
   // Spicy / fun themes
   cyberpunk:  { bg:'#0a0a0f', fg:'#0ff0fc', panel:'#12101a', border:'#9b30ff', red:'#e040fb' },
   retrowave:  { bg:'#1a1a2e', fg:'#e94560', panel:'#16213e', border:'#533483', red:'#e94560' },
