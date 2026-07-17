@@ -16,6 +16,7 @@ from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.task_action_policy import (
     ADMIN_ONLY_TASK_ACTIONS,
+    INTERNAL_TASK_ACTIONS,
     is_admin_only_task_action,
     owner_has_admin_task_privileges,
 )
@@ -1025,7 +1026,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         return {"actions": [
             {"name": name, "description": desc}
             for name, desc in BUILTIN_ACTION_INFO.items()
-            if name not in _ADMIN_ONLY_ACTIONS or _is_admin(user)
+            if name not in INTERNAL_TASK_ACTIONS
+            and (name not in _ADMIN_ONLY_ACTIONS or _is_admin(user))
         ]}
 
     @router.get("/meta/events")

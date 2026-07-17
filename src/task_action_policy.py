@@ -9,6 +9,14 @@ ADMIN_ONLY_TASK_ACTIONS = frozenset({
     "cookbook_serve",
 })
 
+# Actions that exist as builtin actions but are only ever created
+# programmatically (e.g. one ScheduledTask per dashboard block, keyed by
+# block id) — the generic Tasks modal has no way to supply the required
+# structured metadata, so these are hidden from its Action dropdown.
+INTERNAL_TASK_ACTIONS = frozenset({
+    "run_dashboard_block",
+})
+
 
 def is_admin_only_task_action(task_type: str | None, action: str | None) -> bool:
     return (task_type or "llm") == "action" and (action or "") in ADMIN_ONLY_TASK_ACTIONS

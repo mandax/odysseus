@@ -835,10 +835,12 @@ app.include_router(setup_note_routes(task_scheduler, upload_handler=upload_handl
 
 # Email
 from routes.email_routes import setup_email_routes
-from routes.email_extraction_routes import setup_email_extraction_routes
 email_router = setup_email_routes()
 app.include_router(email_router)
-app.include_router(setup_email_extraction_routes())
+
+# Dashboards (blocks that digest email/calendar/etc. data via an LLM prompt)
+from routes.dashboard_routes import setup_dashboard_routes
+app.include_router(setup_dashboard_routes())
 
 # Codex integration — HTTP surface for the Codex plugin/MCP bridge. Reuses
 # api_token scopes (todos:read|write, email:read|draft|send) so external

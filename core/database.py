@@ -1810,23 +1810,49 @@ class Integration(TimestampMixin, Base):
 
 
 
-class EmailExtractionProfile(TimestampMixin, Base):
-    """A saved extraction profile: prompt + email filter -> table results."""
-    __tablename__ = "email_extraction_profiles"
+class Dashboard(TimestampMixin, Base):
+    """A named collection of digest blocks (like a Datadog dashboard)."""
+    __tablename__ = "dashboards"
 
     id = Column(String, primary_key=True, index=True)
     owner = Column(String, nullable=True, index=True)
     name = Column(String, nullable=False)
+    sort_order = Column(Integer, default=0)
+
+    blocks = relationship("DashboardBlock", back_populates="dashboard", cascade="all, delete-orphan")
+
+
+class DashboardBlock(TimestampMixin, Base):
+    """A single digest widget: prompt + data sources -> LLM-extracted table.
+
+    `sources` is a JSON list of source-registry ids (e.g. ["email", "calendar"]);
+    `source_config` is a JSON dict keyed by source id holding that source's
+    filter settings (see src/dashboard_sources.py SOURCE_REGISTRY). New source
+    types plug in there without needing new columns here.
+    """
+    __tablename__ = "dashboard_blocks"
+
+    id = Column(String, primary_key=True, index=True)
+    dashboard_id = Column(String, ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner = Column(String, nullable=True, index=True)
+    title = Column(String, nullable=False)
     prompt = Column(Text, nullable=False)
-    folder = Column(String, nullable=False, default="INBOX")
-    account_id = Column(String, nullable=True)
-    search_filter = Column(String, nullable=True)
-    max_emails = Column(Integer, default=50)
-    schedule = Column(String, nullable=True)
-    enabled = Column(Boolean, default=True)
+    sources = Column(JSON, nullable=False, default=list)
+    source_config = Column(JSON, nullable=True)
+    # Optional per-block model override (endpoint_url + model). Empty = use
+    # the shared background-task candidate chain (task_llm_call_async).
+    model_endpoint_url = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    refresh_interval = Column(String, nullable=False, default="manual")  # manual | hourly | daily | weekly
+    task_id = Column(String, ForeignKey("scheduled_tasks.id", ondelete="SET NULL"), nullable=True)
+    sort_order = Column(Integer, default=0)
+
     last_run_at = Column(DateTime, nullable=True)
-    last_result_doc_id = Column(String, nullable=True)
+    last_columns = Column(JSON, nullable=True)
+    last_rows = Column(JSON, nullable=True)
     last_summary = Column(Text, nullable=True)
+
+    dashboard = relationship("Dashboard", back_populates="blocks")
 
 
 
