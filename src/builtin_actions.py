@@ -2740,7 +2740,7 @@ async def action_run_dashboard_block(owner: str, **kwargs) -> Tuple[str, bool]:
 
         block_id = (kwargs.get("prompt") or "").strip()
         if not block_id:
-            raise TaskNoop("no dashboard block id given")
+            raise TaskNoop("no dashboard widget id given")
 
         try:
             block = await run_block_by_id(block_id, owner)
@@ -2748,16 +2748,16 @@ async def action_run_dashboard_block(owner: str, **kwargs) -> Tuple[str, bool]:
             raise TaskNoop(str(e))
 
         if not block:
-            raise TaskNoop(f"dashboard block '{block_id}' not found")
+            raise TaskNoop(f"dashboard widget '{block_id}' not found")
 
         rows = block.last_rows or []
         cols = block.last_columns or []
         summary = block.last_summary or ""
 
         if not rows:
-            raise TaskNoop(f"block returned no rows: {summary}")
+            raise TaskNoop(f"widget returned no rows: {summary}")
 
-        return f"Dashboard block '{block.title}': {len(rows)} rows, {len(cols)} cols. {summary}", True
+        return f"Dashboard widget '{block.title}': {len(rows)} rows, {len(cols)} cols. {summary}", True
     except TaskNoop:
         raise
     except Exception as e:
@@ -2807,5 +2807,5 @@ BUILTIN_ACTION_INFO = {
     "test_skills": "Run the per-skill Test on every skill: agent run + LLM judge → records verdict on the skill (pass/needs_work/fail/inconclusive). Advisory only — never rewrites or demotes anything.",
     "audit_skills": "Audit unaudited skills after enough new skills are added: test, narrow metadata, self-edit/retry, optional teacher rewrite, tag duplicates/trivial skills, and publish/draft using the auto-approve threshold.",
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
-    "run_dashboard_block": "Refresh a dashboard block: gather its configured data sources (email, calendar, ...), run its LLM prompt to extract structured data, and save the results table on the block.",
+    "run_dashboard_block": "Refresh a dashboard widget: gather its configured data sources (email, calendar, ...), run its LLM prompt to extract structured data, and save the results table on the widget.",
 }

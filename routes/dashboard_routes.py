@@ -598,7 +598,7 @@ async def run_block_by_id(block_id: str, owner: str) -> DashboardBlock:
             DashboardBlock.owner == owner,
         ).first()
         if not block:
-            raise ValueError(f"no dashboard block found for id '{block_id}'")
+            raise ValueError(f"no dashboard widget found for id '{block_id}'")
     finally:
         db.close()
 

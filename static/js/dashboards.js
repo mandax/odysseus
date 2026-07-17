@@ -142,7 +142,7 @@ async function loadBlocks(dashboardId, { silent } = {}) {
     blocks = data.blocks || [];
     if (!silent) renderGrid();
   } catch (e) {
-    uiModule.showToast('Failed to load blocks', 'error');
+    uiModule.showToast('Failed to load widgets', 'error');
   }
 }
 
@@ -155,7 +155,7 @@ async function createDashboard() {
 }
 
 async function deleteDashboard(id) {
-  if (!confirm('Delete this dashboard and all its blocks?')) return;
+  if (!confirm('Delete this dashboard and all its widgets?')) return;
   await apiFetch(`${API}/${id}`, { method: 'DELETE' });
   if (activeDashboardId === id) activeDashboardId = null;
   await loadDashboards();
@@ -169,7 +169,7 @@ async function saveBlock(block) {
 }
 
 async function deleteBlock(id) {
-  if (!confirm('Delete this block?')) return;
+  if (!confirm('Delete this widget?')) return;
   await apiFetch(`${API}/blocks/${id}`, { method: 'DELETE' });
   await loadBlocks(activeDashboardId);
 }
@@ -180,7 +180,7 @@ async function runBlock(id) {
   try {
     await apiFetch(`${API}/blocks/${id}/run`, { method: 'POST' });
     await loadBlocks(activeDashboardId);
-    uiModule.showToast('Block refreshed', { duration: 1500 });
+    uiModule.showToast('Widget refreshed', { duration: 1500 });
   } catch (e) {
     const cancelled = /cancel/i.test(e.message || '');
     uiModule.showToast(cancelled ? 'Run cancelled' : `Run failed: ${e.message}`, cancelled ? { duration: 1500 } : 'error');
@@ -228,9 +228,9 @@ function renderGrid() {
           : ''}
         <button class="memory-toolbar-btn" id="dash-new-dashboard">+ Dashboard</button>
         <span style="flex:1"></span>
-        <button class="memory-toolbar-btn active" id="dash-add-block" ${activeDashboardId ? '' : 'disabled'}>+ Add Block</button>
+        <button class="memory-toolbar-btn active" id="dash-add-block" ${activeDashboardId ? '' : 'disabled'}>+ Add Widget</button>
       </div>
-      <p class="memory-desc">Each block pairs an LLM prompt with data sources (email, calendar, …) and refreshes on its own schedule.</p>
+      <p class="memory-desc">Each widget pairs an LLM prompt with data sources (email, calendar, …) and refreshes on its own schedule.</p>
       <div class="dash-grid" id="dash-grid"></div>
     </div>
   `;
@@ -257,7 +257,7 @@ function _renderTiles() {
     return;
   }
   if (!blocks.length) {
-    grid.innerHTML = '<div class="dash-tile-empty">No blocks yet — click “+ Add Block”.</div>';
+    grid.innerHTML = '<div class="dash-tile-empty">No widgets yet — click “+ Add Widget”.</div>';
     return;
   }
 
@@ -496,9 +496,21 @@ function modelOptionsHtml(items, selectedUrl, selectedModel) {
   const groups = { local: [], api: [] };
   for (const item of items) {
     const cat = item.category === 'local' ? 'local' : 'api';
-    const displayNames = item.models_display || item.models || [];
-    (item.models || []).forEach((mid, i) => {
-      groups[cat].push({ url: item.url, mid, label: `${item.endpoint_name || 'Unknown'} — ${displayNames[i] || mid}` });
+    const ep = item.endpoint_name || 'Unknown';
+    const offline = item.offline ? ' (offline)' : '';
+    // Endpoints expose curated models (`models`) plus everything else in
+    // `models_extra`. Remote providers like DeepSeek often surface their
+    // actual model IDs only in `models_extra`, so include both — matching
+    // how models.js builds the main picker.
+    const curated = item.models || [];
+    const curatedDisplay = item.models_display || curated;
+    const extra = item.models_extra || [];
+    const extraDisplay = item.models_extra_display || extra;
+    curated.forEach((mid, i) => {
+      groups[cat].push({ url: item.url, mid, label: `${ep} — ${curatedDisplay[i] || mid}${offline}` });
+    });
+    extra.forEach((mid, i) => {
+      groups[cat].push({ url: item.url, mid, label: `${ep} — ${extraDisplay[i] || mid}${offline}` });
     });
   }
   const optGroup = (label, list) => {
@@ -627,7 +639,7 @@ async function renderEditor(block) {
 
     try {
       await saveBlock(data);
-      uiModule.showToast(isEdit ? 'Block updated' : 'Block created', { duration: 1500 });
+      uiModule.showToast(isEdit ? 'Widget updated' : 'Widget created', { duration: 1500 });
       renderGrid();
     } catch (err) {
       uiModule.showToast(`Save failed: ${err.message}`, 'error');
