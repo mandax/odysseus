@@ -30,6 +30,14 @@ _REFRESH_CRON = {
     "weekly": "0 6 * * 1",
 }
 
+# Fixed dashboard grid. Blocks are placed by top-left cell (grid_x, grid_y)
+# and span grid_w x grid_h cells. Kept in sync with the CSS grid in
+# static/js/dashboards.js.
+GRID_COLS = 12
+GRID_ROWS = 12
+DEFAULT_BLOCK_W = 4
+DEFAULT_BLOCK_H = 4
+
 # In-flight "Run now" tasks, keyed by block id, so the UI's Cancel button has
 # something to cancel. Scheduled (cron) runs aren't tracked here — there's no
 # UI affordance to cancel those, and letting a background refresh finish is
@@ -56,6 +64,18 @@ class BlockCreate(BaseModel):
     model_endpoint_url: str | None = None
     model: str | None = None
     refresh_interval: str = "manual"
+
+
+class BlockLayoutItem(BaseModel):
+    id: str
+    grid_x: int = Field(ge=0, le=GRID_COLS - 1)
+    grid_y: int = Field(ge=0, le=GRID_ROWS - 1)
+    grid_w: int = Field(ge=1, le=GRID_COLS)
+    grid_h: int = Field(ge=1, le=GRID_ROWS)
+
+
+class LayoutUpdate(BaseModel):
+    blocks: list[BlockLayoutItem]
 
 
 class BlockUpdate(BaseModel):
@@ -96,6 +116,10 @@ def _block_to_dict(b: DashboardBlock) -> dict:
         "refresh_interval": b.refresh_interval,
         "task_id": b.task_id,
         "sort_order": b.sort_order,
+        "grid_x": b.grid_x if b.grid_x is not None else 0,
+        "grid_y": b.grid_y if b.grid_y is not None else 0,
+        "grid_w": b.grid_w or DEFAULT_BLOCK_W,
+        "grid_h": b.grid_h or DEFAULT_BLOCK_H,
         "last_run_at": b.last_run_at.isoformat() if b.last_run_at else None,
         "last_columns": b.last_columns or [],
         "last_rows": b.last_rows or [],
@@ -198,6 +222,34 @@ def setup_dashboard_routes():
         finally:
             db.close()
 
+    @router.put("/{dashboard_id}/layout")
+    async def update_layout(dashboard_id: str, payload: LayoutUpdate, request: Request):
+        """Persist grid positions after a drag/resize. Only touches blocks that
+        belong to this dashboard + owner; unknown ids are ignored."""
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            d = db.query(Dashboard).filter(Dashboard.id == dashboard_id, Dashboard.owner == owner).first()
+            if not d:
+                raise HTTPException(404, "Dashboard not found")
+            by_id = {
+                b.id: b
+                for b in db.query(DashboardBlock).filter(DashboardBlock.dashboard_id == dashboard_id).all()
+            }
+            for item in payload.blocks:
+                b = by_id.get(item.id)
+                if not b:
+                    continue
+                # Clamp spans so x+w / y+h stay on the grid.
+                b.grid_w = min(item.grid_w, GRID_COLS)
+                b.grid_h = min(item.grid_h, GRID_ROWS)
+                b.grid_x = min(item.grid_x, GRID_COLS - b.grid_w)
+                b.grid_y = min(item.grid_y, GRID_ROWS - b.grid_h)
+            db.commit()
+            return {"ok": True}
+        finally:
+            db.close()
+
     @router.post("/{dashboard_id}/blocks")
     async def create_block(dashboard_id: str, payload: BlockCreate, request: Request):
         owner = _owner(request)
@@ -206,6 +258,8 @@ def setup_dashboard_routes():
             d = db.query(Dashboard).filter(Dashboard.id == dashboard_id, Dashboard.owner == owner).first()
             if not d:
                 raise HTTPException(404, "Dashboard not found")
+            existing = db.query(DashboardBlock).filter(DashboardBlock.dashboard_id == dashboard_id).all()
+            gx, gy = _first_free_slot(existing, DEFAULT_BLOCK_W, DEFAULT_BLOCK_H)
             block = DashboardBlock(
                 id=uuid.uuid4().hex[:12],
                 dashboard_id=dashboard_id,
@@ -217,6 +271,10 @@ def setup_dashboard_routes():
                 model_endpoint_url=payload.model_endpoint_url or None,
                 model=payload.model or None,
                 refresh_interval=payload.refresh_interval or "manual",
+                grid_x=gx,
+                grid_y=gy,
+                grid_w=DEFAULT_BLOCK_W,
+                grid_h=DEFAULT_BLOCK_H,
             )
             db.add(block)
             db.commit()
@@ -370,6 +428,29 @@ def setup_dashboard_routes():
             db.close()
 
     return router
+
+
+# ── Grid placement ───────────────────────────────────────────────────────
+
+def _first_free_slot(existing, w: int, h: int) -> tuple[int, int]:
+    """Find the top-left cell of the first free w×h area on the 12×12 grid,
+    scanning row-major. Falls back to (0, 0) if the grid is full."""
+    occupied = set()
+    for b in existing:
+        bx = b.grid_x if b.grid_x is not None else 0
+        by = b.grid_y if b.grid_y is not None else 0
+        bw = b.grid_w or DEFAULT_BLOCK_W
+        bh = b.grid_h or DEFAULT_BLOCK_H
+        for yy in range(by, min(by + bh, GRID_ROWS)):
+            for xx in range(bx, min(bx + bw, GRID_COLS)):
+                occupied.add((xx, yy))
+
+    for y in range(GRID_ROWS - h + 1):
+        for x in range(GRID_COLS - w + 1):
+            if all((x + dx, y + dy) not in occupied
+                   for dy in range(h) for dx in range(w)):
+                return x, y
+    return 0, 0
 
 
 # ── Scheduling ───────────────────────────────────────────────────────────

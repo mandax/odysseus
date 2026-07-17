@@ -40492,17 +40492,22 @@ body.theme-frosted .modal {
 }
 
 /* Datadog-style tile grid */
+/* Fixed 12x12 grid stage. Blocks are placed with grid-column/grid-row spans
+   set inline from grid_x/grid_y/grid_w/grid_h, then dragged/resized (pointer
+   handlers in dashboards.js) with the layout persisted on drop. */
 .dash-grid {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 8px;
-  align-content: start;
-  padding: 2px 2px 6px;
+  grid-template-columns: repeat(12, 1fr);
+  grid-template-rows: repeat(12, 1fr);
+  gap: 6px;
+  padding: 2px;
+  position: relative;
 }
+/* The empty-state message spans the whole stage rather than one cell. */
+.dash-grid > .dash-tile-empty { grid-column: 1 / -1; grid-row: 1 / -1; }
 
 .dash-tile {
   border: 1px solid var(--border);
@@ -40510,16 +40515,62 @@ body.theme-frosted .modal {
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   display: flex;
   flex-direction: column;
-  min-height: 180px;
-  max-height: 360px;
   position: relative;
   overflow: hidden;
-  transition: border-color 0.15s, background 0.15s;
+  min-height: 0;
+  min-width: 0;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 .dash-tile:hover {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   border-color: color-mix(in srgb, var(--fg) 16%, transparent);
 }
+.dash-tile-header { cursor: grab; touch-action: none; }
+.dash-tile-resize { touch-action: none; }
+.dash-tile.dash-dragging {
+  z-index: 40;
+  opacity: 0.9;
+  pointer-events: none;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  border-color: var(--accent, var(--red));
+}
+.dash-tile.dash-resizing {
+  z-index: 40;
+  border-color: var(--accent, var(--red));
+}
+/* Drop/resize target preview */
+.dash-grid-placeholder {
+  border: 1.5px dashed color-mix(in srgb, var(--accent, var(--red)) 60%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+  border-radius: 8px;
+  z-index: 1;
+  pointer-events: none;
+}
+/* Bottom-right resize grip */
+.dash-tile-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.dash-tile:hover .dash-tile-resize { opacity: 0.55; }
+.dash-tile-resize:hover { opacity: 1 !important; }
+.dash-tile-resize::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid color-mix(in srgb, var(--fg) 55%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--fg) 55%, transparent);
+}
+@media (max-width: 768px) { .dash-tile-resize { opacity: 0.4; } }
 
 .dash-tile-header {
   display: flex;

@@ -274,6 +274,160 @@ function _renderTiles() {
       }
     });
   });
+  _installGridInteractions(grid);
+}
+
+// ── 12x12 grid drag + resize ─────────────────────────────────────
+const GRID_COLS = 12;
+const GRID_ROWS = 12;
+
+function _blockById(id) { return blocks.find((b) => b.id === id); }
+
+function _collides(x, y, w, h, exceptId) {
+  for (const b of blocks) {
+    if (b.id === exceptId) continue;
+    const bx = b.grid_x ?? 0, by = b.grid_y ?? 0, bw = b.grid_w || 4, bh = b.grid_h || 4;
+    if (x < bx + bw && x + w > bx && y < by + bh && y + h > by) return true;
+  }
+  return false;
+}
+
+function _gridMetrics(grid) {
+  const rect = grid.getBoundingClientRect();
+  const cs = getComputedStyle(grid);
+  const padL = parseFloat(cs.paddingLeft) || 0;
+  const padT = parseFloat(cs.paddingTop) || 0;
+  const padR = parseFloat(cs.paddingRight) || 0;
+  const padB = parseFloat(cs.paddingBottom) || 0;
+  const gap = parseFloat(cs.columnGap || cs.gap) || 0;
+  const rowGap = parseFloat(cs.rowGap || cs.gap) || 0;
+  const innerW = rect.width - padL - padR;
+  const innerH = rect.height - padT - padB;
+  const stepX = (innerW + gap) / GRID_COLS;
+  const stepY = (innerH + rowGap) / GRID_ROWS;
+  return { rect, padL, padT, stepX, stepY };
+}
+
+function _persistLayout() {
+  if (!activeDashboardId) return;
+  const payload = { blocks: blocks.map((b) => ({
+    id: b.id, grid_x: b.grid_x ?? 0, grid_y: b.grid_y ?? 0, grid_w: b.grid_w || 4, grid_h: b.grid_h || 4,
+  })) };
+  apiFetch(`${API}/${activeDashboardId}/layout`, { method: 'PUT', body: JSON.stringify(payload) })
+    .catch(() => uiModule.showToast('Failed to save layout', 'error'));
+}
+
+function _makePlaceholder(grid) {
+  const ph = document.createElement('div');
+  ph.className = 'dash-grid-placeholder';
+  grid.appendChild(ph);
+  return ph;
+}
+
+function _placeEl(el, x, y, w, h) {
+  el.style.gridColumn = `${x + 1} / span ${w}`;
+  el.style.gridRow = `${y + 1} / span ${h}`;
+}
+
+function _installGridInteractions(grid) {
+  grid.querySelectorAll('.dash-tile').forEach((tile) => {
+    const id = tile.dataset.id;
+    const header = tile.querySelector('.dash-tile-header');
+    const handle = tile.querySelector('.dash-tile-resize');
+    if (header) header.addEventListener('pointerdown', (e) => _startDrag(e, grid, tile, id));
+    if (handle) handle.addEventListener('pointerdown', (e) => _startResize(e, grid, tile, id));
+  });
+}
+
+function _startDrag(e, grid, tile, id) {
+  if (e.button != null && e.button !== 0) return;
+  if (e.target.closest('[data-action]')) return; // let action buttons work
+  const block = _blockById(id);
+  if (!block) return;
+  e.preventDefault();
+
+  const m = _gridMetrics(grid);
+  const tileRect = tile.getBoundingClientRect();
+  const grabX = e.clientX - tileRect.left;
+  const grabY = e.clientY - tileRect.top;
+  const w = block.grid_w || 4, h = block.grid_h || 4;
+
+  let targetX = block.grid_x ?? 0, targetY = block.grid_y ?? 0;
+  const ph = _makePlaceholder(grid);
+  _placeEl(ph, targetX, targetY, w, h);
+
+  // Lift the tile out to follow the cursor.
+  tile.classList.add('dash-dragging');
+  tile.style.position = 'fixed';
+  tile.style.width = `${tileRect.width}px`;
+  tile.style.height = `${tileRect.height}px`;
+  tile.style.left = `${tileRect.left}px`;
+  tile.style.top = `${tileRect.top}px`;
+
+  const onMove = (ev) => {
+    tile.style.left = `${ev.clientX - grabX}px`;
+    tile.style.top = `${ev.clientY - grabY}px`;
+    const cx = Math.round((ev.clientX - grabX - m.rect.left - m.padL) / m.stepX);
+    const cy = Math.round((ev.clientY - grabY - m.rect.top - m.padT) / m.stepY);
+    const nx = Math.max(0, Math.min(cx, GRID_COLS - w));
+    const ny = Math.max(0, Math.min(cy, GRID_ROWS - h));
+    if (!_collides(nx, ny, w, h, id)) { targetX = nx; targetY = ny; _placeEl(ph, targetX, targetY, w, h); }
+  };
+  const onUp = () => {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    ph.remove();
+    tile.classList.remove('dash-dragging');
+    tile.style.position = tile.style.width = tile.style.height = tile.style.left = tile.style.top = '';
+    const changed = block.grid_x !== targetX || block.grid_y !== targetY;
+    block.grid_x = targetX; block.grid_y = targetY;
+    _placeEl(tile, targetX, targetY, w, h);
+    if (changed) _persistLayout();
+  };
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+}
+
+function _startResize(e, grid, tile, id) {
+  if (e.button != null && e.button !== 0) return;
+  const block = _blockById(id);
+  if (!block) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  const m = _gridMetrics(grid);
+  const x = block.grid_x ?? 0, y = block.grid_y ?? 0;
+  const startX = e.clientX, startY = e.clientY;
+  const startW = block.grid_w || 4, startH = block.grid_h || 4;
+
+  let targetW = startW, targetH = startH;
+  const ph = _makePlaceholder(grid);
+  _placeEl(ph, x, y, targetW, targetH);
+  tile.classList.add('dash-resizing');
+
+  const onMove = (ev) => {
+    const dw = Math.round((ev.clientX - startX) / m.stepX);
+    const dh = Math.round((ev.clientY - startY) / m.stepY);
+    const nw = Math.max(1, Math.min(startW + dw, GRID_COLS - x));
+    const nh = Math.max(1, Math.min(startH + dh, GRID_ROWS - y));
+    if (!_collides(x, y, nw, nh, id)) {
+      targetW = nw; targetH = nh;
+      _placeEl(ph, x, y, targetW, targetH);
+      _placeEl(tile, x, y, targetW, targetH);
+    }
+  };
+  const onUp = () => {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    ph.remove();
+    tile.classList.remove('dash-resizing');
+    const changed = block.grid_w !== targetW || block.grid_h !== targetH;
+    block.grid_w = targetW; block.grid_h = targetH;
+    _placeEl(tile, x, y, targetW, targetH);
+    if (changed) _persistLayout();
+  };
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
 }
 
 function _iconBtn(action, id, title, svg) {
@@ -301,8 +455,12 @@ function renderTile(b) {
     ? `<span class="dash-tile-updated">updated ${fmtDate(b.last_run_at)}</span>`
     : `<span class="dash-tile-updated">refresh: ${esc(b.refresh_interval)}</span>`);
 
+  const x = (b.grid_x ?? 0) + 1, y = (b.grid_y ?? 0) + 1;
+  const w = b.grid_w || 4, h = b.grid_h || 4;
+  const place = `grid-column:${x} / span ${w};grid-row:${y} / span ${h};`;
+
   return `
-    <div class="dash-tile" data-id="${b.id}">
+    <div class="dash-tile" data-id="${b.id}" style="${place}">
       <div class="dash-tile-header">
         <div style="min-width:0;">
           <div class="dash-tile-title">${esc(b.title)}</div>
@@ -317,6 +475,7 @@ function renderTile(b) {
       </div>
       ${b.last_summary ? `<div class="dash-tile-summary">${esc(b.last_summary)}</div>` : ''}
       ${tableBody}
+      <div class="dash-tile-resize" title="Resize"></div>
     </div>`;
 }
 

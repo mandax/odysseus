@@ -1847,6 +1847,14 @@ class DashboardBlock(TimestampMixin, Base):
     task_id = Column(String, ForeignKey("scheduled_tasks.id", ondelete="SET NULL"), nullable=True)
     sort_order = Column(Integer, default=0)
 
+    # Position/size on the dashboard's fixed 12x12 grid. grid_x/grid_y are the
+    # top-left cell (0-11); grid_w/grid_h are spans in cells. Assigned on create
+    # by first-free-slot packing, then rewritten as the user drags/resizes.
+    grid_x = Column(Integer, default=0)
+    grid_y = Column(Integer, default=0)
+    grid_w = Column(Integer, default=4)
+    grid_h = Column(Integer, default=4)
+
     last_run_at = Column(DateTime, nullable=True)
     last_columns = Column(JSON, nullable=True)
     last_rows = Column(JSON, nullable=True)
@@ -2018,6 +2026,43 @@ def init_db():
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
+    _migrate_add_dashboard_block_grid_columns()
+
+
+def _migrate_add_dashboard_block_grid_columns():
+    """Add grid_x/grid_y/grid_w/grid_h to dashboard_blocks for the 12x12 grid.
+
+    Guarded + idempotent. Existing blocks (created before drag/resize layout)
+    get defaults; the routes layer auto-packs any block still sitting at the
+    0,0 default so they don't all overlap in the top-left cell."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='dashboard_blocks'"
+        )]
+        if "dashboard_blocks" not in tables:
+            return
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(dashboard_blocks)")]
+        added = False
+        for name, default in (("grid_x", 0), ("grid_y", 0), ("grid_w", 4), ("grid_h", 4)):
+            if name not in cols:
+                conn.execute(f"ALTER TABLE dashboard_blocks ADD COLUMN {name} INTEGER DEFAULT {default}")
+                added = True
+        if added:
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added grid columns to dashboard_blocks")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"dashboard grid migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _migrate_backfill_task_folders():
