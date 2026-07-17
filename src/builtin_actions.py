@@ -2731,6 +2731,62 @@ async def action_cookbook_serve(
     return f"Launched {repo_id} (session {sid})", True
 
 
+
+
+async def action_extract_email_data(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Run email extraction for a profile. The prompt is the profile name or ID."""
+    try:
+        from core.database import SessionLocal, EmailExtractionProfile
+        from routes.email_extraction_routes import _run_extraction_for_profile, _save_extraction_document
+
+        prompt = (kwargs.get("prompt") or "").strip()
+        db = SessionLocal()
+        try:
+            q = db.query(EmailExtractionProfile).filter(
+                EmailExtractionProfile.owner == owner,
+                EmailExtractionProfile.enabled == True,
+            )
+            # prompt can be profile name or ID
+            q = q.filter(
+                (EmailExtractionProfile.name == prompt) |
+                (EmailExtractionProfile.id == prompt)
+            )
+            profile = q.first()
+            if not profile:
+                raise TaskNoop(f"no extraction profile found for '{prompt}'")
+        finally:
+            db.close()
+
+        result = await _run_extraction_for_profile(profile)
+        doc = await _save_extraction_document(profile, result, owner)
+
+        rows = result.get("rows", [])
+        cols = result.get("columns", [])
+        summary = result.get("summary", "")
+
+        if doc:
+            db = SessionLocal()
+            try:
+                p = db.query(EmailExtractionProfile).filter(
+                    EmailExtractionProfile.id == profile.id,
+                ).first()
+                if p:
+                    from datetime import datetime, timezone
+                    p.last_run_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    p.last_result_doc_id = doc.id
+                    p.last_summary = summary
+                    db.commit()
+            finally:
+                db.close()
+
+        if not rows:
+            raise TaskNoop(f"extraction returned no rows: {summary}")
+
+        return f"Extraction '{profile.name}': {len(rows)} rows, {len(cols)} cols. {summary}", True
+    except Exception as e:
+        logger.error(f"extract_email_data action failed: {e}")
+        return str(e), False
+
 BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
     "tidy_documents": action_tidy_documents,
@@ -2752,6 +2808,7 @@ BUILTIN_ACTIONS = {
     "audit_skills": action_audit_skills,
     "check_email_urgency": action_check_email_urgency,
     "cookbook_serve": action_cookbook_serve,
+    "extract_email_data": action_extract_email_data,
     # ping_notes removed from the registry — runs only inside `_note_pings_loop`.
 }
 
@@ -2773,4 +2830,5 @@ BUILTIN_ACTION_INFO = {
     "test_skills": "Run the per-skill Test on every skill: agent run + LLM judge → records verdict on the skill (pass/needs_work/fail/inconclusive). Advisory only — never rewrites or demotes anything.",
     "audit_skills": "Audit unaudited skills after enough new skills are added: test, narrow metadata, self-edit/retry, optional teacher rewrite, tag duplicates/trivial skills, and publish/draft using the auto-approve threshold.",
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
+    "extract_email_data": "Run a saved email extraction profile: fetch emails matching a filter, run an LLM prompt to extract structured data, and save the results as a table in a document.",
 }

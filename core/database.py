@@ -1810,6 +1810,26 @@ class Integration(TimestampMixin, Base):
 
 
 
+class EmailExtractionProfile(TimestampMixin, Base):
+    """A saved extraction profile: prompt + email filter -> table results."""
+    __tablename__ = "email_extraction_profiles"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False)
+    prompt = Column(Text, nullable=False)
+    folder = Column(String, nullable=False, default="INBOX")
+    account_id = Column(String, nullable=True)
+    search_filter = Column(String, nullable=True)
+    max_emails = Column(Integer, default=50)
+    schedule = Column(String, nullable=True)
+    enabled = Column(Boolean, default=True)
+    last_run_at = Column(DateTime, nullable=True)
+    last_result_doc_id = Column(String, nullable=True)
+    last_summary = Column(Text, nullable=True)
+
+
+
 
 
 def _migrate_seed_email_account():
