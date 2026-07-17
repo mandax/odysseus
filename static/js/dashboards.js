@@ -1,16 +1,20 @@
 /**
  * Dashboards — user-defined blocks that digest email/calendar/etc. data
  * through an LLM prompt into a table, on a refresh schedule.
+ *
+ * Follows the Tasks-modal pattern: one floating window whose body swaps
+ * between a grid view and a block-editor view (no stacked modals).
  */
 
-import { showToast } from "./ui.js";
+import uiModule from './ui.js';
+import { makeWindowDraggable } from './windowDrag.js';
 
-const API = "/api/dashboards";
+const API = '/api/dashboards';
 
 async function apiFetch(url, opts = {}) {
   const res = await fetch(url, {
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
     ...opts,
   });
   if (!res.ok) {
@@ -25,36 +29,86 @@ async function apiFetch(url, opts = {}) {
 }
 
 // ── State ────────────────────────────────────────────────────────
+let _open = false;
+let _escHandler = null;
+let _view = 'grid';            // 'grid' | 'editor'
 let dashboards = [];
 let activeDashboardId = null;
 let blocks = [];
 let sourceRegistry = [];
 let modelItems = null;
 
-// ── Init ─────────────────────────────────────────────────────────
-export async function initDashboards(container) {
-  container.innerHTML = `
-    <div class="dash-layout">
-      <div class="dash-sidebar">
-        <div class="dash-sidebar-header">
-          <h3>Dashboards</h3>
-          <button class="btn btn-sm btn-primary" id="dash-btn-new">+ New</button>
-        </div>
-        <div id="dash-list" class="dash-list"></div>
-      </div>
-      <div class="dash-main" id="dash-main">
-        <div class="dash-placeholder">Select a dashboard or create a new one</div>
-      </div>
-    </div>
-    <div id="dash-modal-overlay" class="dash-modal-overlay" style="display:none"></div>
-  `;
+export function isDashboardsOpen() { return _open; }
 
-  await loadSourceRegistry();
-  await loadDashboards();
-  bindEvents(container);
+// ── Window lifecycle ────────────────────────────────────────────
+export function openDashboards() {
+  if (_open) return;
+  _open = true;
+  _view = 'grid';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.id = 'dashboards-modal';
+  modal.innerHTML = `
+    <div class="modal-content dashboards-modal-content">
+      <div class="modal-header">
+        <h4 style="margin:0;margin-right:auto;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>Dashboards</h4>
+        <button class="close-btn" id="dashboards-close" aria-label="Close dashboards">✖</button>
+      </div>
+      <div class="modal-body"></div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const content = modal.querySelector('.modal-content');
+  const header = modal.querySelector('.modal-header');
+  if (content && header) makeWindowDraggable(modal, { content, header });
+
+  document.getElementById('dashboards-close').addEventListener('click', closeDashboards);
+  modal.addEventListener('click', (e) => {
+    if (uiModule.isTouchInsideModal()) return;
+    if (e.target === modal) closeDashboards();
+  });
+  _escHandler = (e) => {
+    if (e.key !== 'Escape') return;
+    if (_view === 'editor') { renderGrid(); return; }
+    closeDashboards();
+  };
+  document.addEventListener('keydown', _escHandler);
+
+  _load();
 }
 
-// ── API: dashboards ─────────────────────────────────────────────
+export function closeDashboards() {
+  if (!_open) return;
+  _open = false;
+  const modal = document.getElementById('dashboards-modal');
+  if (modal) {
+    const content = modal.querySelector('.modal-content');
+    if (content) {
+      content.classList.add('modal-closing');
+      content.addEventListener('animationend', () => modal.remove(), { once: true });
+      setTimeout(() => { if (modal.parentElement) modal.remove(); }, 250);
+    } else {
+      modal.remove();
+    }
+  }
+  if (_escHandler) {
+    document.removeEventListener('keydown', _escHandler);
+    _escHandler = null;
+  }
+}
+
+function _body() { return document.querySelector('#dashboards-modal .modal-body'); }
+
+async function _load() {
+  const body = _body();
+  if (body) body.innerHTML = '<div class="dash-tile-empty">Loading…</div>';
+  await loadSourceRegistry();
+  await loadDashboards();
+}
+
+// ── Data ─────────────────────────────────────────────────────────
 async function loadSourceRegistry() {
   try {
     const data = await apiFetch(`${API}/meta/sources`);
@@ -68,153 +122,201 @@ async function loadDashboards() {
   try {
     const data = await apiFetch(API);
     dashboards = data.dashboards || [];
-    renderDashboardList();
+    if (!activeDashboardId || !dashboards.find((d) => d.id === activeDashboardId)) {
+      activeDashboardId = dashboards.length ? dashboards[0].id : null;
+    }
+    if (activeDashboardId) {
+      await loadBlocks(activeDashboardId, { silent: true });
+    } else {
+      blocks = [];
+    }
+    renderGrid();
   } catch (e) {
-    showToast("Failed to load dashboards", "error");
+    uiModule.showToast('Failed to load dashboards', 'error');
   }
 }
 
-async function createDashboard(name) {
-  const d = await apiFetch(API, { method: "POST", body: JSON.stringify({ name }) });
-  await loadDashboards();
-  return d;
-}
-
-async function deleteDashboard(id) {
-  await apiFetch(`${API}/${id}`, { method: "DELETE" });
-  if (activeDashboardId === id) {
-    activeDashboardId = null;
-    blocks = [];
-    document.getElementById("dash-main").innerHTML =
-      '<div class="dash-placeholder">Select a dashboard or create a new one</div>';
-  }
-  await loadDashboards();
-}
-
-async function selectDashboard(id) {
-  activeDashboardId = id;
-  renderDashboardList();
-  await loadBlocks(id);
-}
-
-// ── API: blocks ──────────────────────────────────────────────────
-async function loadBlocks(dashboardId) {
-  const main = document.getElementById("dash-main");
-  main.innerHTML = '<div class="dash-loading">Loading…</div>';
+async function loadBlocks(dashboardId, { silent } = {}) {
   try {
     const data = await apiFetch(`${API}/${dashboardId}/blocks`);
     blocks = data.blocks || [];
-    renderBlocks();
+    if (!silent) renderGrid();
   } catch (e) {
-    showToast("Failed to load blocks", "error");
+    uiModule.showToast('Failed to load blocks', 'error');
   }
+}
+
+async function createDashboard() {
+  const name = prompt('Dashboard name:');
+  if (!name || !name.trim()) return;
+  const d = await apiFetch(API, { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+  activeDashboardId = d.id;
+  await loadDashboards();
+}
+
+async function deleteDashboard(id) {
+  if (!confirm('Delete this dashboard and all its blocks?')) return;
+  await apiFetch(`${API}/${id}`, { method: 'DELETE' });
+  if (activeDashboardId === id) activeDashboardId = null;
+  await loadDashboards();
 }
 
 async function saveBlock(block) {
   const isNew = !block.id;
   const url = isNew ? `${API}/${activeDashboardId}/blocks` : `${API}/blocks/${block.id}`;
-  const method = isNew ? "POST" : "PUT";
-  await apiFetch(url, { method, body: JSON.stringify(block) });
-  await loadBlocks(activeDashboardId);
+  await apiFetch(url, { method: isNew ? 'POST' : 'PUT', body: JSON.stringify(block) });
+  await loadBlocks(activeDashboardId, { silent: true });
 }
 
 async function deleteBlock(id) {
-  await apiFetch(`${API}/blocks/${id}`, { method: "DELETE" });
+  if (!confirm('Delete this block?')) return;
+  await apiFetch(`${API}/blocks/${id}`, { method: 'DELETE' });
   await loadBlocks(activeDashboardId);
 }
 
 async function runBlock(id) {
-  const card = document.querySelector(`.dash-block[data-id="${id}"]`);
-  if (card) card.classList.add("dash-block-running");
+  const tile = document.querySelector(`.dash-tile[data-id="${id}"]`);
+  if (tile) _showRunOverlay(tile, id);
   try {
-    await apiFetch(`${API}/blocks/${id}/run`, { method: "POST" });
+    await apiFetch(`${API}/blocks/${id}/run`, { method: 'POST' });
     await loadBlocks(activeDashboardId);
-    showToast("Block refreshed", "success");
+    uiModule.showToast('Block refreshed', { duration: 1500 });
   } catch (e) {
-    showToast(`Run failed: ${e.message}`, "error");
-    if (card) card.classList.remove("dash-block-running");
+    const cancelled = /cancel/i.test(e.message || '');
+    uiModule.showToast(cancelled ? 'Run cancelled' : `Run failed: ${e.message}`, cancelled ? { duration: 1500 } : 'error');
+    await loadBlocks(activeDashboardId);
   }
 }
 
-// ── Render: dashboard list ──────────────────────────────────────
-function renderDashboardList() {
-  const list = document.getElementById("dash-list");
-  if (!list) return;
+async function cancelBlockRun(id) {
+  try {
+    await apiFetch(`${API}/blocks/${id}/cancel`, { method: 'POST' });
+  } catch (e) {
+    // The run may have already finished — the next loadBlocks() reconciles.
+  }
+}
 
-  if (!dashboards.length) {
-    list.innerHTML = '<div class="dash-empty">No dashboards yet. Click "+ New" to create one.</div>';
+function _showRunOverlay(tile, id) {
+  if (tile.querySelector('.dash-tile-run-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'dash-tile-run-overlay';
+  overlay.innerHTML = `<span>Running…</span><button class="memory-toolbar-btn danger" data-cancel-run>Cancel</button>`;
+  overlay.querySelector('[data-cancel-run]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    overlay.querySelector('span').textContent = 'Cancelling…';
+    cancelBlockRun(id);
+  });
+  tile.appendChild(overlay);
+}
+
+// ── Grid view ────────────────────────────────────────────────────
+function renderGrid() {
+  _view = 'grid';
+  const body = _body();
+  if (!body) return;
+
+  const dashOptions = dashboards
+    .map((d) => `<option value="${esc(d.id)}" ${d.id === activeDashboardId ? 'selected' : ''}>${esc(d.name)}</option>`)
+    .join('');
+
+  body.innerHTML = `
+    <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;gap:6px;">
+      <div class="dash-toolbar">
+        ${dashboards.length
+          ? `<select id="dash-dashboard-select" class="task-form-input dash-dashboard-select" title="Switch dashboard">${dashOptions}</select>
+             <button class="memory-toolbar-btn" id="dash-delete-dashboard" title="Delete this dashboard">Delete</button>`
+          : ''}
+        <button class="memory-toolbar-btn" id="dash-new-dashboard">+ Dashboard</button>
+        <span style="flex:1"></span>
+        <button class="memory-toolbar-btn active" id="dash-add-block" ${activeDashboardId ? '' : 'disabled'}>+ Add Block</button>
+      </div>
+      <p class="memory-desc">Each block pairs an LLM prompt with data sources (email, calendar, …) and refreshes on its own schedule.</p>
+      <div class="dash-grid" id="dash-grid"></div>
+    </div>
+  `;
+
+  body.querySelector('#dash-dashboard-select')?.addEventListener('change', async (e) => {
+    activeDashboardId = e.target.value;
+    await loadBlocks(activeDashboardId);
+  });
+  body.querySelector('#dash-new-dashboard')?.addEventListener('click', createDashboard);
+  body.querySelector('#dash-delete-dashboard')?.addEventListener('click', () => {
+    if (activeDashboardId) deleteDashboard(activeDashboardId);
+  });
+  body.querySelector('#dash-add-block')?.addEventListener('click', () => renderEditor(null));
+
+  _renderTiles();
+}
+
+function _renderTiles() {
+  const grid = document.getElementById('dash-grid');
+  if (!grid) return;
+
+  if (!activeDashboardId) {
+    grid.innerHTML = '<div class="dash-tile-empty">Create a dashboard to get started.</div>';
     return;
   }
-
-  list.innerHTML = dashboards
-    .map(
-      (d) => `
-    <div class="dash-list-item ${d.id === activeDashboardId ? "active" : ""}" data-id="${d.id}">
-      <div class="dash-list-name">${esc(d.name)}</div>
-      <button class="btn-icon dash-btn-delete" title="Delete" data-action="delete-dashboard" data-id="${d.id}">✕</button>
-    </div>`
-    )
-    .join("");
-}
-
-// ── Render: blocks ───────────────────────────────────────────────
-function renderBlocks() {
-  const main = document.getElementById("dash-main");
-  if (!main) return;
-
-  const dashboard = dashboards.find((d) => d.id === activeDashboardId);
-  const header = `
-    <div class="dash-main-header">
-      <h3>${esc(dashboard ? dashboard.name : "Dashboard")}</h3>
-      <button class="btn btn-sm btn-primary" id="dash-btn-add-block">+ Add Block</button>
-    </div>`;
-
   if (!blocks.length) {
-    main.innerHTML = `${header}<div class="dash-placeholder">No blocks yet. Add one to start digesting data.</div>`;
+    grid.innerHTML = '<div class="dash-tile-empty">No blocks yet — click “+ Add Block”.</div>';
     return;
   }
 
-  main.innerHTML = `${header}<div class="dash-blocks">${blocks.map(renderBlockCard).join("")}</div>`;
+  grid.innerHTML = blocks.map(renderTile).join('');
+  grid.querySelectorAll('[data-action]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.id;
+      switch (btn.dataset.action) {
+        case 'run': runBlock(id); break;
+        case 'edit': renderEditor(blocks.find((b) => b.id === id)); break;
+        case 'delete': deleteBlock(id); break;
+        case 'download': window.open(`${API}/blocks/${id}/download`, '_blank'); break;
+      }
+    });
+  });
 }
 
-function renderBlockCard(b) {
-  let tableHtml = "";
+function _iconBtn(action, id, title, svg) {
+  return `<button class="memory-item-btn" data-action="${action}" data-id="${id}" title="${title}">${svg}</button>`;
+}
+
+function renderTile(b) {
+  const pills = (b.sources || [])
+    .map((sid) => sourceRegistry.find((s) => s.id === sid)?.label || sid)
+    .map((l) => `<span class="dash-source-pill">${esc(l)}</span>`)
+    .join('');
+
+  let tableBody;
   if (b.last_columns && b.last_columns.length) {
-    tableHtml += "<thead><tr>";
-    for (const c of b.last_columns) tableHtml += `<th>${esc(c)}</th>`;
-    tableHtml += "</tr></thead><tbody>";
-    for (const row of b.last_rows || []) {
-      tableHtml += "<tr>";
-      for (const c of b.last_columns) tableHtml += `<td>${esc(String(row[c] ?? ""))}</td>`;
-      tableHtml += "</tr>";
-    }
-    tableHtml += "</tbody>";
+    const thead = `<thead><tr>${b.last_columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>`;
+    const tbody = `<tbody>${(b.last_rows || [])
+      .map((row) => `<tr>${b.last_columns.map((c) => { const v = String(row[c] ?? ''); return `<td title="${esc(v)}">${esc(v)}</td>`; }).join('')}</tr>`)
+      .join('')}</tbody>`;
+    tableBody = `<div class="dash-tile-table-wrap"><table class="dash-tile-table">${thead}${tbody}</table></div>`;
+  } else {
+    tableBody = `<div class="dash-tile-empty">${b.last_run_at ? 'No rows extracted.' : 'Not run yet.'}</div>`;
   }
 
-  const sourceLabels = (b.sources || [])
-    .map((sid) => sourceRegistry.find((s) => s.id === sid)?.label || sid)
-    .join(", ");
+  const meta = pills + (b.last_run_at
+    ? `<span class="dash-tile-updated">updated ${fmtDate(b.last_run_at)}</span>`
+    : `<span class="dash-tile-updated">refresh: ${esc(b.refresh_interval)}</span>`);
 
   return `
-    <div class="dash-block" data-id="${b.id}">
-      <div class="dash-block-header">
-        <div>
-          <div class="dash-block-title">${esc(b.title)}</div>
-          <div class="dash-block-meta">
-            ${esc(sourceLabels || "No sources")} · refresh: ${esc(b.refresh_interval)}
-            ${b.last_run_at ? " · last run " + fmtDate(b.last_run_at) : ""}
-          </div>
+    <div class="dash-tile" data-id="${b.id}">
+      <div class="dash-tile-header">
+        <div style="min-width:0;">
+          <div class="dash-tile-title">${esc(b.title)}</div>
+          <div class="dash-tile-meta">${meta}</div>
         </div>
-        <div class="dash-block-actions">
-          <button class="btn-icon" title="Run now" data-action="run-block" data-id="${b.id}">▶</button>
-          <button class="btn-icon" title="Download" data-action="download-block" data-id="${b.id}">⬇</button>
-          <button class="btn-icon" title="Edit" data-action="edit-block" data-id="${b.id}">✎</button>
-          <button class="btn-icon" title="Delete" data-action="delete-block" data-id="${b.id}">✕</button>
+        <div class="dash-tile-actions">
+          ${_iconBtn('run', b.id, 'Run now', '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 4 20 12 6 20 6 4"/></svg>')}
+          ${_iconBtn('download', b.id, 'Download', '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>')}
+          ${_iconBtn('edit', b.id, 'Edit', '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>')}
+          ${_iconBtn('delete', b.id, 'Delete', '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>')}
         </div>
       </div>
-      ${b.last_summary ? `<p class="dash-block-summary">${esc(b.last_summary)}</p>` : ""}
-      ${tableHtml ? `<div class="dash-table-wrap"><table class="dash-table">${tableHtml}</table></div>` : `<p class="dash-no-results">Not run yet.</p>`}
-      <div class="dash-block-spinner">Running…</div>
+      ${b.last_summary ? `<div class="dash-tile-summary">${esc(b.last_summary)}</div>` : ''}
+      ${tableBody}
     </div>`;
 }
 
@@ -222,7 +324,7 @@ function renderBlockCard(b) {
 async function loadModels() {
   if (modelItems) return modelItems;
   try {
-    const res = await fetch("/api/models?background=false", { credentials: "same-origin" });
+    const res = await fetch('/api/models?background=false', { credentials: 'same-origin' });
     const data = await res.json();
     modelItems = data.items || [];
   } catch (e) {
@@ -234,292 +336,159 @@ async function loadModels() {
 function modelOptionsHtml(items, selectedUrl, selectedModel) {
   const groups = { local: [], api: [] };
   for (const item of items) {
-    const cat = item.category === "local" ? "local" : "api";
+    const cat = item.category === 'local' ? 'local' : 'api';
     const displayNames = item.models_display || item.models || [];
     (item.models || []).forEach((mid, i) => {
-      groups[cat].push({
-        url: item.url,
-        mid,
-        label: `${item.endpoint_name || "Unknown"} — ${displayNames[i] || mid}`,
-      });
+      groups[cat].push({ url: item.url, mid, label: `${item.endpoint_name || 'Unknown'} — ${displayNames[i] || mid}` });
     });
   }
   const optGroup = (label, list) => {
-    if (!list.length) return "";
-    const opts = list
-      .map((m) => {
-        const val = `${m.url}|||${m.mid}`;
-        const sel = m.url === selectedUrl && m.mid === selectedModel ? "selected" : "";
-        return `<option value="${esc(val)}" ${sel}>${esc(m.label)}</option>`;
-      })
-      .join("");
+    if (!list.length) return '';
+    const opts = list.map((m) => {
+      const val = `${m.url}|||${m.mid}`;
+      const sel = m.url === selectedUrl && m.mid === selectedModel ? 'selected' : '';
+      return `<option value="${esc(val)}" ${sel}>${esc(m.label)}</option>`;
+    }).join('');
     return `<optgroup label="${label}">${opts}</optgroup>`;
   };
-  return (
-    `<option value="">Use background-task default</option>` +
-    optGroup("Remote / API", groups.api) +
-    optGroup("Local", groups.local)
-  );
+  return `<option value="">Use background-task default</option>${optGroup('Remote / API', groups.api)}${optGroup('Local', groups.local)}`;
 }
 
-// ── Modal: block editor ────────────────────────────────────────────
-async function showBlockModal(block = null) {
+// ── Editor view (swaps into the same window body) ─────────────────
+async function renderEditor(block) {
+  _view = 'editor';
   const isEdit = !!block;
-  const overlay = document.getElementById("dash-modal-overlay");
-  if (!overlay) return;
+  const body = _body();
+  if (!body) return;
+  body.innerHTML = '<div class="dash-tile-empty">Loading…</div>';
 
   const items = await loadModels();
+  if (_view !== 'editor') return; // user navigated away while models loaded
   const sourcesConf = block?.source_config || {};
   const activeSources = new Set(block?.sources || []);
+  const curRefresh = block?.refresh_interval || 'manual';
 
-  const sourceFieldsHtml = sourceRegistry
-    .map((s) => {
-      const checked = activeSources.has(s.id) ? "checked" : "";
-      const cfg = sourcesConf[s.id] || {};
-      const fields = (s.config_schema || [])
-        .map((f) => {
-          const val = cfg[f.key] ?? f.default ?? "";
-          return `<label class="dash-subfield">${esc(f.label)}
-            <input type="${f.type === "number" ? "number" : "text"}" data-source="${s.id}" data-key="${f.key}"
-                   value="${esc(val)}" placeholder="${esc(f.placeholder || "")}">
-          </label>`;
-        })
-        .join("");
-      return `
-        <div class="dash-source-block">
-          <label class="dash-checkbox"><input type="checkbox" class="dash-source-toggle" data-source-id="${s.id}" ${checked}> ${esc(s.label)}</label>
-          <div class="dash-source-fields" ${checked ? "" : 'style="display:none"'}>${fields}</div>
-        </div>`;
-    })
-    .join("");
-
-  overlay.innerHTML = `
-    <div class="dash-modal">
-      <h3>${isEdit ? "Edit Block" : "New Block"}</h3>
+  body.innerHTML = `
+    <div class="dash-editor admin-card">
+      <button class="memory-toolbar-btn dash-editor-back" id="dash-editor-back"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="15 18 9 12 15 6"/></svg>Back</button>
       <form id="dash-block-form">
-        <label>Title <input name="title" value="${esc(block?.title || "")}" required></label>
-        <label>Prompt (what to extract, and in what format)
-          <textarea name="prompt" rows="6" required placeholder="e.g. List every invoice mentioned, with columns Date, Vendor, Amount, Due Date.">${esc(block?.prompt || "")}</textarea>
-        </label>
+        <label class="task-form-label">Title</label>
+        <input class="task-form-input" name="title" value="${esc(block?.title || '')}" placeholder="e.g. Invoice tracker" required>
 
-        <label>Data sources</label>
-        <div id="dash-sources">${sourceFieldsHtml}</div>
+        <label class="task-form-label">Prompt <span style="opacity:0.6;font-weight:normal;">(what to extract, and the columns you want)</span></label>
+        <textarea class="task-form-input task-form-textarea" name="prompt" rows="4" required placeholder="e.g. List every invoice, with columns Date, Vendor, Amount, Due Date.">${esc(block?.prompt || '')}</textarea>
 
-        <label>Model <span style="opacity:0.5;font-weight:normal;font-size:10px;">(optional — overrides the default background-task model)</span>
-          <select name="model_select" id="dash-model-select">${modelOptionsHtml(items, block?.model_endpoint_url, block?.model)}</select>
-        </label>
+        <label class="task-form-label">Data sources</label>
+        <div class="dash-source-toggles" id="dash-source-toggles">
+          ${sourceRegistry.map((s) => `<button type="button" class="task-toggle-btn ${activeSources.has(s.id) ? 'active' : ''}" data-source-id="${s.id}">${esc(s.label)}</button>`).join('')}
+        </div>
+        <div id="dash-source-configs"></div>
 
-        <label>Refresh
-          <select name="refresh_interval">
-            ${["manual", "hourly", "daily", "weekly"]
-              .map((v) => `<option value="${v}" ${block?.refresh_interval === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`)
-              .join("")}
-          </select>
-        </label>
+        <label class="task-form-label">Model <span style="opacity:0.6;font-weight:normal;">(optional — overrides the background-task default)</span></label>
+        <select class="task-form-input" name="model_select">${modelOptionsHtml(items, block?.model_endpoint_url, block?.model)}</select>
 
-        <input type="hidden" name="id" value="${block?.id || ""}">
-        <div class="dash-modal-buttons">
-          <button type="submit" class="btn btn-primary">Save</button>
-          <button type="button" class="btn" id="dash-modal-cancel">Cancel</button>
+        <label class="task-form-label">Refresh</label>
+        <div class="task-form-toggle" id="dash-refresh-toggle">
+          ${['manual', 'hourly', 'daily', 'weekly'].map((v) => `<button type="button" class="task-toggle-btn ${curRefresh === v ? 'active' : ''}" data-val="${v}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}
+        </div>
+        <input type="hidden" name="refresh_interval" value="${curRefresh}">
+
+        <div class="task-form-actions">
+          <button type="button" class="memory-toolbar-btn" id="dash-editor-cancel">Cancel</button>
+          <button type="submit" class="memory-toolbar-btn active">${isEdit ? 'Save' : 'Create'}</button>
         </div>
       </form>
-    </div>`;
-  overlay.style.display = "flex";
+    </div>
+  `;
 
-  overlay.querySelector("#dash-modal-cancel").onclick = () => {
-    overlay.style.display = "none";
+  const configsEl = body.querySelector('#dash-source-configs');
+  const renderSourceConfig = (sourceId) => {
+    const entry = sourceRegistry.find((s) => s.id === sourceId);
+    if (!entry) return '';
+    const cfg = sourcesConf[sourceId] || {};
+    const rows = (entry.config_schema || []).map((f) => {
+      const val = cfg[f.key] ?? f.default ?? '';
+      return `<div class="dash-source-config-row">
+        <label>${esc(f.label)}</label>
+        <input class="task-form-input" type="${f.type === 'number' ? 'number' : 'text'}" data-source="${sourceId}" data-key="${f.key}" value="${esc(val)}" placeholder="${esc(f.placeholder || '')}">
+      </div>`;
+    }).join('');
+    return `<div class="dash-source-config"><div class="dash-source-config-title">${esc(entry.label)} settings</div>${rows}</div>`;
   };
+  const syncConfigs = () => {
+    const active = [...body.querySelectorAll('#dash-source-toggles .task-toggle-btn.active')].map((b) => b.dataset.sourceId);
+    configsEl.innerHTML = active.map(renderSourceConfig).join('');
+  };
+  syncConfigs();
 
-  overlay.querySelectorAll(".dash-source-toggle").forEach((cb) => {
-    cb.addEventListener("change", () => {
-      const fields = cb.closest(".dash-source-block").querySelector(".dash-source-fields");
-      fields.style.display = cb.checked ? "" : "none";
-    });
+  body.querySelectorAll('#dash-source-toggles .task-toggle-btn').forEach((btn) => {
+    btn.addEventListener('click', () => { btn.classList.toggle('active'); syncConfigs(); });
   });
 
-  overlay.querySelector("#dash-block-form").onsubmit = async (e) => {
+  const refreshHidden = body.querySelector('input[name="refresh_interval"]');
+  body.querySelector('#dash-refresh-toggle').addEventListener('click', (e) => {
+    const btn = e.target.closest('.task-toggle-btn');
+    if (!btn) return;
+    body.querySelectorAll('#dash-refresh-toggle .task-toggle-btn').forEach((b) => b.classList.toggle('active', b === btn));
+    refreshHidden.value = btn.dataset.val;
+  });
+
+  body.querySelector('#dash-editor-back').addEventListener('click', renderGrid);
+  body.querySelector('#dash-editor-cancel').addEventListener('click', renderGrid);
+
+  body.querySelector('#dash-block-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
 
     const sources = [];
     const source_config = {};
-    overlay.querySelectorAll(".dash-source-toggle").forEach((cb) => {
-      if (!cb.checked) return;
-      const sid = cb.dataset.sourceId;
+    body.querySelectorAll('#dash-source-toggles .task-toggle-btn.active').forEach((btn) => {
+      const sid = btn.dataset.sourceId;
       sources.push(sid);
       const cfg = {};
-      overlay.querySelectorAll(`[data-source="${sid}"]`).forEach((input) => {
-        if (input.value !== "") cfg[input.dataset.key] = input.value;
+      body.querySelectorAll(`[data-source="${sid}"]`).forEach((input) => {
+        if (input.value !== '') cfg[input.dataset.key] = input.value;
       });
       source_config[sid] = cfg;
     });
 
-    const modelVal = fd.get("model_select") || "";
-    const [model_endpoint_url, model] = modelVal ? modelVal.split("|||") : [null, null];
+    const modelVal = fd.get('model_select') || '';
+    const [model_endpoint_url, model] = modelVal ? modelVal.split('|||') : [null, null];
 
     const data = {
-      title: fd.get("title"),
-      prompt: fd.get("prompt"),
+      title: fd.get('title'),
+      prompt: fd.get('prompt'),
       sources,
       source_config,
       model_endpoint_url,
       model,
-      refresh_interval: fd.get("refresh_interval") || "manual",
+      refresh_interval: fd.get('refresh_interval') || 'manual',
     };
-    if (fd.get("id")) data.id = fd.get("id");
+    if (block?.id) data.id = block.id;
 
-    await saveBlock(data);
-    overlay.style.display = "none";
-    showToast(isEdit ? "Block updated" : "Block created", "success");
-  };
-}
-
-// ── Events ───────────────────────────────────────────────────────
-function bindEvents(container) {
-  container.addEventListener("click", async (e) => {
-    const btn = e.target.closest("button");
-    if (!btn) return;
-
-    if (btn.id === "dash-btn-new") {
-      const name = prompt("Dashboard name:");
-      if (name && name.trim()) {
-        const d = await createDashboard(name.trim());
-        await selectDashboard(d.id);
-      }
-      return;
-    }
-
-    if (btn.id === "dash-btn-add-block") {
-      showBlockModal();
-      return;
-    }
-
-    const action = btn.dataset.action;
-    const id = btn.dataset.id;
-
-    if (action === "delete-dashboard" && id) {
-      e.stopPropagation();
-      if (confirm("Delete this dashboard and all its blocks?")) await deleteDashboard(id);
-      return;
-    }
-    if (action === "run-block" && id) {
-      await runBlock(id);
-      return;
-    }
-    if (action === "edit-block" && id) {
-      showBlockModal(blocks.find((b) => b.id === id));
-      return;
-    }
-    if (action === "delete-block" && id) {
-      if (confirm("Delete this block?")) await deleteBlock(id);
-      return;
-    }
-    if (action === "download-block" && id) {
-      window.open(`${API}/blocks/${id}/download`, "_blank");
-      return;
-    }
-
-    const item = e.target.closest(".dash-list-item");
-    if (item && !e.target.closest("[data-action]")) {
-      await selectDashboard(item.dataset.id);
+    try {
+      await saveBlock(data);
+      uiModule.showToast(isEdit ? 'Block updated' : 'Block created', { duration: 1500 });
+      renderGrid();
+    } catch (err) {
+      uiModule.showToast(`Save failed: ${err.message}`, 'error');
     }
   });
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
 function esc(s) {
-  if (s == null) return "";
-  const d = document.createElement("div");
+  if (s == null) return '';
+  const d = document.createElement('div');
   d.textContent = String(s);
   return d.innerHTML;
 }
 
 function fmtDate(iso) {
-  if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
 
-// ── CSS injection ────────────────────────────────────────────────
-const CSS = `
-.dash-layout { display: flex; gap: 16px; height: 100%; }
-.dash-sidebar { width: 260px; flex-shrink: 0; border-right: 1px solid var(--border, #ddd); overflow-y: auto; padding-right: 8px; }
-.dash-sidebar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.dash-sidebar-header h3 { margin: 0; }
-.dash-list { display: flex; flex-direction: column; gap: 4px; }
-.dash-list-item { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
-.dash-list-item:hover { background: var(--hover, #f5f5f5); }
-.dash-list-item.active { border-color: var(--primary, #4a90d9); background: var(--active-bg, #e8f0fe); }
-.dash-list-name { font-weight: 600; }
-.dash-main { flex: 1; overflow-y: auto; }
-.dash-main-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.dash-placeholder { color: var(--muted, #999); text-align: center; padding-top: 60px; }
-.dash-loading { text-align: center; padding-top: 60px; color: var(--muted, #999); }
-.dash-empty { color: var(--muted, #999); padding: 12px; font-style: italic; }
-.dash-blocks { display: flex; flex-direction: column; gap: 16px; }
-.dash-block { border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 16px; position: relative; }
-.dash-block-header { display: flex; justify-content: space-between; align-items: flex-start; }
-.dash-block-title { font-weight: 600; }
-.dash-block-meta { font-size: 0.8em; color: var(--muted, #888); margin-top: 2px; }
-.dash-block-actions { display: flex; gap: 2px; }
-.dash-block-actions .btn-icon { background: none; border: none; cursor: pointer; font-size: 1.05em; padding: 2px 6px; border-radius: 4px; }
-.dash-block-actions .btn-icon:hover { background: var(--hover, #eee); }
-.dash-block-summary { color: var(--muted, #666); font-style: italic; margin: 8px 0 0; }
-.dash-no-results { color: var(--muted, #999); margin: 8px 0 0; }
-.dash-table-wrap { overflow-x: auto; margin-top: 10px; }
-.dash-table { width: 100%; border-collapse: collapse; }
-.dash-table th, .dash-table td { border: 1px solid var(--border, #ddd); padding: 6px 10px; text-align: left; font-size: 0.9em; }
-.dash-table th { background: var(--th-bg, #f5f5f5); font-weight: 600; }
-.dash-table tr:hover { background: var(--hover, #fafafa); }
-.dash-block-spinner { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; background: var(--bg, rgba(255,255,255,0.85)); border-radius: 8px; color: var(--muted, #999); }
-.dash-block-running .dash-block-spinner { display: flex; }
-.dash-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.dash-modal { background: var(--bg, #fff); border-radius: 8px; padding: 24px; width: 600px; max-width: 92vw; max-height: 88vh; overflow-y: auto; }
-.dash-modal h3 { margin: 0 0 16px 0; }
-.dash-modal label { display: block; margin-bottom: 12px; font-weight: 500; }
-.dash-modal input, .dash-modal textarea, .dash-modal select { width: 100%; padding: 8px; border: 1px solid var(--border, #ddd); border-radius: 4px; font-size: 0.9em; box-sizing: border-box; }
-.dash-modal textarea { font-family: monospace; resize: vertical; }
-.dash-source-block { border: 1px solid var(--border, #ddd); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
-.dash-source-fields { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-.dash-subfield { font-size: 0.85em; font-weight: normal; margin-bottom: 0; }
-.dash-checkbox { display: flex !important; align-items: center; gap: 8px; margin-bottom: 0 !important; }
-.dash-checkbox input { width: auto; }
-.dash-modal-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
-`;
-
-if (typeof document !== "undefined") {
-  const style = document.createElement("style");
-  style.textContent = CSS;
-  style.id = "dash-styles";
-  document.head.appendChild(style);
-}
-
-// ── Auto-wire sidebar entry ─────────────────────────────────────
-if (typeof document !== "undefined") {
-  document.addEventListener("DOMContentLoaded", () => {
-    const btn = document.getElementById("dashboards-section-title");
-    if (!btn) return;
-    btn.addEventListener("click", async () => {
-      let panel = document.getElementById("dash-content-panel");
-      if (!panel) {
-        panel = document.createElement("div");
-        panel.id = "dash-content-panel";
-        panel.style.cssText = "position:fixed;inset:0;z-index:900;background:var(--bg,#fff);overflow-y:auto;padding:24px;display:none";
-        const close = document.createElement("button");
-        close.textContent = "×";
-        close.style.cssText = "position:absolute;top:12px;right:16px;background:none;border:none;font-size:24px;cursor:pointer;color:var(--muted,#999)";
-        close.addEventListener("click", () => { panel.style.display = "none"; });
-        panel.appendChild(close);
-        const wrap = document.createElement("div");
-        wrap.id = "dash-content-wrap";
-        panel.appendChild(wrap);
-        document.body.appendChild(panel);
-      }
-      panel.style.display = "block";
-      initDashboards(document.getElementById("dash-content-wrap"));
-    });
-  });
-}
+const dashboardsModule = { openDashboards, closeDashboards, isDashboardsOpen };
+export default dashboardsModule;
+window.dashboardsModule = dashboardsModule;

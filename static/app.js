@@ -23,6 +23,7 @@ import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js?v=20260630tasksactivity';
+import dashboardsModule from './js/dashboards.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
@@ -1066,6 +1067,16 @@ function initializeEventListeners() {
     toolTasksBtn.addEventListener('click', () => {
       if (tasksModule) {
         tasksModule.isTasksOpen() ? tasksModule.closeTasks() : tasksModule.openTasks();
+      }
+    });
+  }
+
+  // Dashboards tool button
+  const toolDashboardsBtn = el('tool-dashboards-btn');
+  if (toolDashboardsBtn) {
+    toolDashboardsBtn.addEventListener('click', () => {
+      if (dashboardsModule) {
+        dashboardsModule.isDashboardsOpen() ? dashboardsModule.closeDashboards() : dashboardsModule.openDashboards();
       }
     });
   }

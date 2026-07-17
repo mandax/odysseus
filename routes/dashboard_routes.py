@@ -30,6 +30,12 @@ _REFRESH_CRON = {
     "weekly": "0 6 * * 1",
 }
 
+# In-flight "Run now" tasks, keyed by block id, so the UI's Cancel button has
+# something to cancel. Scheduled (cron) runs aren't tracked here — there's no
+# UI affordance to cancel those, and letting a background refresh finish is
+# the safer default.
+_RUNNING_RUNS: dict[str, asyncio.Task] = {}
+
 
 # ── Pydantic schemas ────────────────────────────────────────────────────
 
@@ -281,11 +287,18 @@ def setup_dashboard_routes():
         finally:
             db.close()
 
+        task = asyncio.ensure_future(run_block(block))
+        _RUNNING_RUNS[block_id] = task
         try:
-            result = await run_block(block)
+            result = await task
+        except asyncio.CancelledError:
+            raise HTTPException(409, "Run cancelled")
         except Exception as e:
             logger.error(f"Dashboard block run failed for {block_id}: {e}")
             raise HTTPException(500, str(e))
+        finally:
+            if _RUNNING_RUNS.get(block_id) is task:
+                _RUNNING_RUNS.pop(block_id, None)
 
         db = SessionLocal()
         try:
@@ -301,6 +314,24 @@ def setup_dashboard_routes():
             raise HTTPException(404, "Block not found")
         finally:
             db.close()
+
+    @router.post("/blocks/{block_id}/cancel")
+    async def cancel_block_run(block_id: str, request: Request):
+        """Cancel an in-flight 'Run now' for this block, if one is running."""
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            block = db.query(DashboardBlock).filter(DashboardBlock.id == block_id, DashboardBlock.owner == owner).first()
+            if not block:
+                raise HTTPException(404, "Block not found")
+        finally:
+            db.close()
+
+        task = _RUNNING_RUNS.get(block_id)
+        if not task or task.done():
+            raise HTTPException(404, "No run in progress")
+        task.cancel()
+        return {"ok": True}
 
     @router.get("/blocks/{block_id}/download")
     async def download_block(block_id: str, request: Request):
