@@ -80,8 +80,14 @@ async def fetch_email(owner: str, config: dict) -> list[dict]:
 async def fetch_calendar(owner: str, config: dict) -> list[dict]:
     """Fetch calendar events in a relative date window around now."""
     from core.database import SessionLocal, CalendarEvent, CalendarCal
-    from routes.calendar_routes import _expand_rrule
+    from routes.calendar_routes import _expand_rrule, FALLBACK_OWNER
     from sqlalchemy import and_, or_
+
+    # In single-user / auth-off mode the calendar stores rows under
+    # FALLBACK_OWNER (see calendar_routes._require_user), while dashboard
+    # widgets carry owner="". Resolve the same way the calendar's own
+    # read/write paths do, or the widget would never see any events.
+    owner = owner or FALLBACK_OWNER
 
     days_back = int(config.get("days_back") or 0)
     days_forward = int(config.get("days_forward") or 14)

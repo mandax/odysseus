@@ -345,18 +345,24 @@ def setup_dashboard_routes():
         finally:
             db.close()
 
+        logger.info(f"Dashboard widget run started: '{block.title}' ({block_id}), sources={block.sources or []}")
         task = asyncio.ensure_future(run_block(block))
         _RUNNING_RUNS[block_id] = task
         try:
             result = await task
         except asyncio.CancelledError:
+            logger.info(f"Dashboard widget run cancelled: '{block.title}' ({block_id})")
             raise HTTPException(409, "Run cancelled")
         except Exception as e:
-            logger.error(f"Dashboard block run failed for {block_id}: {e}")
+            logger.error(f"Dashboard widget run failed: '{block.title}' ({block_id}): {e}")
             raise HTTPException(500, str(e))
         finally:
             if _RUNNING_RUNS.get(block_id) is task:
                 _RUNNING_RUNS.pop(block_id, None)
+        logger.info(
+            f"Dashboard widget run finished: '{block.title}' ({block_id}) — "
+            f"{len(result.get('rows', []))} rows, {len(result.get('columns', []))} columns"
+        )
 
         db = SessionLocal()
         try:

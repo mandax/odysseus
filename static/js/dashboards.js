@@ -132,7 +132,7 @@ async function loadDashboards() {
     }
     renderGrid();
   } catch (e) {
-    uiModule.showToast('Failed to load dashboards', 'error');
+    uiModule.showError('Failed to load dashboards');
   }
 }
 
@@ -142,7 +142,7 @@ async function loadBlocks(dashboardId, { silent } = {}) {
     blocks = data.blocks || [];
     if (!silent) renderGrid();
   } catch (e) {
-    uiModule.showToast('Failed to load widgets', 'error');
+    uiModule.showError('Failed to load widgets');
   }
 }
 
@@ -178,12 +178,23 @@ async function runBlock(id) {
   const tile = document.querySelector(`.dash-tile[data-id="${id}"]`);
   if (tile) _showRunOverlay(tile, id);
   try {
-    await apiFetch(`${API}/blocks/${id}/run`, { method: 'POST' });
+    const result = await apiFetch(`${API}/blocks/${id}/run`, { method: 'POST' });
     await loadBlocks(activeDashboardId);
-    uiModule.showToast('Widget refreshed', { duration: 1500 });
+    const n = (result?.last_rows || []).length;
+    if (n) {
+      uiModule.showToast(`Widget refreshed — ${n} row${n === 1 ? '' : 's'}`, { duration: 2000 });
+    } else {
+      // A run that returns no rows is easy to mistake for "nothing happened",
+      // so surface the model's own summary (e.g. "No data from the selected
+      // sources.") rather than a generic success message.
+      uiModule.showToast(result?.last_summary || 'Widget refreshed — no rows returned', { duration: 3500 });
+    }
   } catch (e) {
-    const cancelled = /cancel/i.test(e.message || '');
-    uiModule.showToast(cancelled ? 'Run cancelled' : `Run failed: ${e.message}`, cancelled ? { duration: 1500 } : 'error');
+    if (/cancel/i.test(e.message || '')) {
+      uiModule.showToast('Run cancelled', { duration: 1500 });
+    } else {
+      uiModule.showError(`Run failed: ${e.message}`);
+    }
     await loadBlocks(activeDashboardId);
   }
 }
@@ -314,7 +325,7 @@ function _persistLayout() {
     id: b.id, grid_x: b.grid_x ?? 0, grid_y: b.grid_y ?? 0, grid_w: b.grid_w || 4, grid_h: b.grid_h || 4,
   })) };
   apiFetch(`${API}/${activeDashboardId}/layout`, { method: 'PUT', body: JSON.stringify(payload) })
-    .catch(() => uiModule.showToast('Failed to save layout', 'error'));
+    .catch(() => uiModule.showError('Failed to save layout'));
 }
 
 function _makePlaceholder(grid) {
@@ -642,7 +653,7 @@ async function renderEditor(block) {
       uiModule.showToast(isEdit ? 'Widget updated' : 'Widget created', { duration: 1500 });
       renderGrid();
     } catch (err) {
-      uiModule.showToast(`Save failed: ${err.message}`, 'error');
+      uiModule.showError(`Save failed: ${err.message}`);
     }
   });
 }
