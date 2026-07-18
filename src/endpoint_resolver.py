@@ -442,6 +442,63 @@ def resolve_endpoint_by_id(
         db.close()
 
 
+def resolve_endpoint_by_url(
+    url: str, model: Optional[str] = None, owner: Optional[str] = None
+) -> Optional[Tuple[str, str, Dict]]:
+    """Resolve a dispatch target from a saved endpoint *URL* (chat URL or base).
+
+    Like resolve_endpoint_by_id but keyed on the URL, for callers that only
+    persisted the URL (e.g. legacy dashboard widgets created before the
+    endpoint id was stored). Finds the enabled ModelEndpoint whose base/chat
+    URL matches and returns (chat_url, model, headers) *with credentials* so
+    the call authenticates instead of dispatching keyless. Returns None if no
+    endpoint matches.
+    """
+    if not url:
+        return None
+    target = normalize_base(url)
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        eps = q.all()
+        match = None
+        for ep in eps:
+            base = normalize_base(getattr(ep, "base_url", "") or "")
+            if not base:
+                continue
+            # Exact chat-URL match wins; otherwise accept a base/URL prefix
+            # match so ".../v1" vs ".../v1/chat/completions" still resolve.
+            if build_chat_url(base) == target or target == base or target.startswith(base) or base in target:
+                match = ep
+                if build_chat_url(base) == target:
+                    break
+        if not match:
+            return None
+        try:
+            base, api_key = resolve_endpoint_runtime(match, owner=owner)
+        except Exception as e:
+            logger.warning("Could not resolve endpoint runtime credentials by url: %s", e)
+            return None
+        chat_url = build_chat_url(base)
+        headers = build_headers(api_key, base)
+        m = (model or "").strip()
+        if m and m in _endpoint_hidden_models(match):
+            m = ""
+        if not m:
+            m = _first_chat_model(_endpoint_enabled_models(match)) or ""
+        if not m:
+            return None
+        return chat_url, m, headers
+    except Exception as e:
+        logger.debug(f"Could not resolve endpoint by url {url}: {e}")
+        return None
+    finally:
+        db.close()
+
+
 def resolve_chat_fallback_candidates(owner: Optional[str] = None) -> list:
     """Build the configured default-chat fallback chain as a list of
     (chat_url, model, headers) tuples, skipping any that can't resolve.

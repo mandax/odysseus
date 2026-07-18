@@ -541,7 +541,18 @@ def _resolve_block_candidates(block: DashboardBlock, owner: str) -> list:
             f"'{block.model_endpoint_id}' could not be resolved; falling back."
         )
     if block.model_endpoint_url and block.model:
-        # Legacy rows stored only a URL (no id) — dispatch keyless as before.
+        # Legacy rows stored only a URL (no id). Resolve the matching endpoint's
+        # credentials by URL so the call still authenticates — dispatching the
+        # bare URL keyless is what made remote providers (DeepSeek) 401.
+        from src.endpoint_resolver import resolve_endpoint_by_url
+        resolved = resolve_endpoint_by_url(block.model_endpoint_url, block.model, owner=owner_arg)
+        if resolved:
+            url, model, headers = resolved
+            return [(url, model, headers or {})]
+        logger.warning(
+            f"Dashboard widget '{block.title}' ({block.id}): no endpoint matched "
+            f"legacy URL '{block.model_endpoint_url}'; dispatching without credentials."
+        )
         return [(block.model_endpoint_url, block.model, {})]
     return []
 
