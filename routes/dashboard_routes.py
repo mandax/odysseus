@@ -61,6 +61,7 @@ class BlockCreate(BaseModel):
     prompt: str
     sources: list[str] = Field(default_factory=list)
     source_config: dict = Field(default_factory=dict)
+    model_endpoint_id: str | None = None
     model_endpoint_url: str | None = None
     model: str | None = None
     refresh_interval: str = "manual"
@@ -83,6 +84,7 @@ class BlockUpdate(BaseModel):
     prompt: str | None = None
     sources: list[str] | None = None
     source_config: dict | None = None
+    model_endpoint_id: str | None = None
     model_endpoint_url: str | None = None
     model: str | None = None
     refresh_interval: str | None = None
@@ -111,6 +113,7 @@ def _block_to_dict(b: DashboardBlock) -> dict:
         "prompt": b.prompt,
         "sources": b.sources or [],
         "source_config": b.source_config or {},
+        "model_endpoint_id": b.model_endpoint_id,
         "model_endpoint_url": b.model_endpoint_url,
         "model": b.model,
         "refresh_interval": b.refresh_interval,
@@ -268,6 +271,7 @@ def setup_dashboard_routes():
                 prompt=payload.prompt.strip(),
                 sources=payload.sources,
                 source_config=payload.source_config,
+                model_endpoint_id=payload.model_endpoint_id or None,
                 model_endpoint_url=payload.model_endpoint_url or None,
                 model=payload.model or None,
                 refresh_interval=payload.refresh_interval or "manual",
@@ -303,6 +307,8 @@ def setup_dashboard_routes():
                 block.sources = payload.sources
             if payload.source_config is not None:
                 block.source_config = payload.source_config
+            if payload.model_endpoint_id is not None:
+                block.model_endpoint_id = payload.model_endpoint_id or None
             if payload.model_endpoint_url is not None:
                 block.model_endpoint_url = payload.model_endpoint_url or None
             if payload.model is not None:
@@ -515,6 +521,31 @@ def _delete_block_task(db, block: DashboardBlock):
 
 # ── Extraction engine ────────────────────────────────────────────────────
 
+def _resolve_block_candidates(block: DashboardBlock, owner: str) -> list:
+    """Resolve the per-widget model override to LLM candidates *with credentials*.
+
+    Prefers ``model_endpoint_id`` (resolves the endpoint's stored API key via
+    resolve_endpoint_by_id — earlier the run sent no key and remote providers
+    401'd). Falls back to a legacy ``model_endpoint_url`` (sent keyless, best
+    effort). Returns [] to signal "use the shared background-task chain".
+    """
+    owner_arg = owner or None
+    if block.model_endpoint_id:
+        from src.endpoint_resolver import resolve_endpoint_by_id
+        resolved = resolve_endpoint_by_id(block.model_endpoint_id, block.model, owner=owner_arg)
+        if resolved:
+            url, model, headers = resolved
+            return [(url, model, headers or {})]
+        logger.warning(
+            f"Dashboard widget '{block.title}' ({block.id}): configured endpoint "
+            f"'{block.model_endpoint_id}' could not be resolved; falling back."
+        )
+    if block.model_endpoint_url and block.model:
+        # Legacy rows stored only a URL (no id) — dispatch keyless as before.
+        return [(block.model_endpoint_url, block.model, {})]
+    return []
+
+
 async def run_block(block: DashboardBlock) -> dict:
     """Gather each source's data, ask the LLM to extract a table per the block's prompt."""
     owner = block.owner or ""
@@ -541,9 +572,9 @@ Return format:
 
     user_message = f"Source data:\n{json.dumps(gathered, ensure_ascii=False, indent=2, default=str)}"
 
-    if block.model_endpoint_url and block.model:
+    candidates = _resolve_block_candidates(block, owner)
+    if candidates:
         from src.llm_core import llm_call_async_with_fallback
-        candidates = [(block.model_endpoint_url, block.model, {})]
         llm_call = lambda **kw: llm_call_async_with_fallback(candidates, **kw)
     else:
         from src.task_endpoint import task_llm_call_async

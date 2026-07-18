@@ -503,7 +503,7 @@ async function loadModels() {
   return modelItems;
 }
 
-function modelOptionsHtml(items, selectedUrl, selectedModel) {
+function modelOptionsHtml(items, selectedEpId, selectedUrl, selectedModel) {
   const groups = { local: [], api: [] };
   for (const item of items) {
     const cat = item.category === 'local' ? 'local' : 'api';
@@ -517,18 +517,18 @@ function modelOptionsHtml(items, selectedUrl, selectedModel) {
     const curatedDisplay = item.models_display || curated;
     const extra = item.models_extra || [];
     const extraDisplay = item.models_extra_display || extra;
-    curated.forEach((mid, i) => {
-      groups[cat].push({ url: item.url, mid, label: `${ep} — ${curatedDisplay[i] || mid}${offline}` });
-    });
-    extra.forEach((mid, i) => {
-      groups[cat].push({ url: item.url, mid, label: `${ep} — ${extraDisplay[i] || mid}${offline}` });
-    });
+    const push = (mid, label) => groups[cat].push({ epId: item.endpoint_id || '', url: item.url || '', mid, label });
+    curated.forEach((mid, i) => push(mid, `${ep} — ${curatedDisplay[i] || mid}${offline}`));
+    extra.forEach((mid, i) => push(mid, `${ep} — ${extraDisplay[i] || mid}${offline}`));
   }
   const optGroup = (label, list) => {
     if (!list.length) return '';
     const opts = list.map((m) => {
-      const val = `${m.url}|||${m.mid}`;
-      const sel = m.url === selectedUrl && m.mid === selectedModel ? 'selected' : '';
+      // Carry the endpoint id (so the run can resolve its stored API key) plus
+      // the URL as a legacy fallback: "<epId>|||<url>|||<model>".
+      const val = `${m.epId}|||${m.url}|||${m.mid}`;
+      const match = (m.epId && m.epId === selectedEpId) || (!m.epId && m.url === selectedUrl);
+      const sel = match && m.mid === selectedModel ? 'selected' : '';
       return `<option value="${esc(val)}" ${sel}>${esc(m.label)}</option>`;
     }).join('');
     return `<optgroup label="${label}">${opts}</optgroup>`;
@@ -567,7 +567,7 @@ async function renderEditor(block) {
         <div id="dash-source-configs"></div>
 
         <label class="task-form-label">Model <span style="opacity:0.6;font-weight:normal;">(optional — overrides the background-task default)</span></label>
-        <select class="task-form-input" name="model_select">${modelOptionsHtml(items, block?.model_endpoint_url, block?.model)}</select>
+        <select class="task-form-input" name="model_select">${modelOptionsHtml(items, block?.model_endpoint_id, block?.model_endpoint_url, block?.model)}</select>
 
         <label class="task-form-label">Refresh</label>
         <div class="task-form-toggle" id="dash-refresh-toggle">
@@ -635,15 +635,17 @@ async function renderEditor(block) {
     });
 
     const modelVal = fd.get('model_select') || '';
-    const [model_endpoint_url, model] = modelVal ? modelVal.split('|||') : [null, null];
+    // "<epId>|||<url>|||<model>" — see modelOptionsHtml. Empty = default.
+    const [model_endpoint_id, model_endpoint_url, model] = modelVal ? modelVal.split('|||') : [null, null, null];
 
     const data = {
       title: fd.get('title'),
       prompt: fd.get('prompt'),
       sources,
       source_config,
-      model_endpoint_url,
-      model,
+      model_endpoint_id: model_endpoint_id || null,
+      model_endpoint_url: model_endpoint_url || null,
+      model: model || null,
       refresh_interval: fd.get('refresh_interval') || 'manual',
     };
     if (block?.id) data.id = block.id;

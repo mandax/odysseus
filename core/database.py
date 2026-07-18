@@ -1839,8 +1839,12 @@ class DashboardBlock(TimestampMixin, Base):
     prompt = Column(Text, nullable=False)
     sources = Column(JSON, nullable=False, default=list)
     source_config = Column(JSON, nullable=True)
-    # Optional per-block model override (endpoint_url + model). Empty = use
-    # the shared background-task candidate chain (task_llm_call_async).
+    # Optional per-block model override. `model_endpoint_id` points at a
+    # ModelEndpoint so run_block can resolve the endpoint's stored API key/
+    # headers (see resolve_endpoint_by_id); `model_endpoint_url` is retained
+    # for legacy rows created before the id was stored. Empty = use the shared
+    # background-task candidate chain (task_llm_call_async).
+    model_endpoint_id = Column(String, nullable=True)
     model_endpoint_url = Column(String, nullable=True)
     model = Column(String, nullable=True)
     refresh_interval = Column(String, nullable=False, default="manual")  # manual | hourly | daily | weekly
@@ -2027,6 +2031,7 @@ def init_db():
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
     _migrate_add_dashboard_block_grid_columns()
+    _migrate_add_dashboard_block_model_endpoint_id()
 
 
 def _migrate_add_dashboard_block_grid_columns():
@@ -2058,6 +2063,36 @@ def _migrate_add_dashboard_block_grid_columns():
             logging.getLogger(__name__).info("Migrated: added grid columns to dashboard_blocks")
     except Exception as e:
         logging.getLogger(__name__).warning(f"dashboard grid migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_dashboard_block_model_endpoint_id():
+    """Add model_endpoint_id to dashboard_blocks so per-widget model overrides
+    resolve the endpoint's stored API key/headers (previously the run sent no
+    credentials and remote providers 401'd). Guarded + idempotent."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='dashboard_blocks'"
+        )]
+        if "dashboard_blocks" not in tables:
+            return
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(dashboard_blocks)")]
+        if "model_endpoint_id" not in cols:
+            conn.execute("ALTER TABLE dashboard_blocks ADD COLUMN model_endpoint_id VARCHAR")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added model_endpoint_id to dashboard_blocks")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"dashboard model_endpoint_id migration failed: {e}")
     finally:
         try:
             conn.close()
