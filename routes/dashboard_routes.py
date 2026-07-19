@@ -420,11 +420,12 @@ def setup_dashboard_routes():
 
             if columns:
                 import csv, io
+                from src.dashboard_cells import cell_to_text
                 buf = io.StringIO()
                 writer = csv.DictWriter(buf, fieldnames=columns)
                 writer.writeheader()
                 for row in rows:
-                    writer.writerow({c: row.get(c, "") for c in columns})
+                    writer.writerow({c: cell_to_text(row.get(c, "")) for c in columns})
                 return Response(
                     content=buf.getvalue(),
                     media_type="text/csv",
@@ -579,7 +580,31 @@ Return format:
     ...
   ],
   "summary": "One-line summary of what was extracted"
-}}"""
+}}
+
+A cell value is normally a plain string. ONLY IF the user's instructions above
+ask for links, buttons/actions (CTAs), or formatted dates may a cell instead be
+an object:
+{{
+  "text": "shown when there are no actions",
+  "date": "2026-07-22T10:00:00",  "format": "date",  // date|datetime|time|relative — renders localized
+  "html": "<b>inline</b> rich text or an <a href=\\"https://…\\">external link</a>",
+  "actions": [
+    {{"type": "url",           "label": "Open",      "href": "https://…"}},
+    {{"type": "chat",          "label": "Summarize", "prompt": "Summarize invoice X"}},
+    {{"type": "email_compose", "label": "Reply",     "to": "a@b.com", "subject": "Re: …"}},
+    {{"type": "email_open",    "label": "View",      "uid": "<the email's uid from the source data>"}},
+    {{"type": "navigate",      "label": "Calendar",  "target": "calendar"}}
+  ]
+}}
+Rules: use objects only where a CTA or date formatting is requested — keep
+other cells plain strings. For dates, prefer {{"date": "<ISO 8601>", "format":
+"date"}} so they render localized. `html` allows only inline tags (a, b, i,
+span, br, code, …). `url`
+hrefs must be http(s)/mailto. `navigate` target is one of: calendar, tasks,
+dashboards, email, memory, notes, compare, cookbook, research, gallery,
+library. For `email_open`, use a uid present in the source data — never invent
+one."""
 
     user_message = f"Source data:\n{json.dumps(gathered, ensure_ascii=False, indent=2, default=str)}"
 
@@ -633,6 +658,11 @@ Return format:
     columns = parsed.get("columns", [])
     rows = parsed.get("rows", [])
     summary = parsed.get("summary", f"Extracted {len(rows)} rows with {len(columns)} columns")
+
+    # Cells may carry LLM-authored HTML/CTAs built from untrusted source data —
+    # sanitize before it's stored and rendered (see src/dashboard_cells.py).
+    from src.dashboard_cells import sanitize_rows
+    rows = sanitize_rows(columns, rows)
 
     return {"rows": rows, "columns": columns, "summary": summary}
 

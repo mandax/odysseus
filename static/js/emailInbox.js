@@ -205,6 +205,12 @@ export function init(documentModule) {
   _watchDocOpenToReDockEmail();
 }
 
+export async function openCompose(prefill = {}) {
+  // Open the inbox surface (its own handler mounts the pane), then compose.
+  try { document.getElementById('email-section-title')?.click(); } catch (_) {}
+  await _composeNew(prefill || {});
+}
+
 export async function openReplyDraft(uid, folder = 'INBOX', mode = 'reply', prefilledBody = '') {
   if (!uid) return;
   const previousFolder = _currentFolder;
@@ -1311,8 +1317,14 @@ async function _createEmailChat(emailData) {
   }
 }
 
-async function _composeNew() {
+async function _composeNew(prefill = {}) {
   if (!_docModule) return;
+  // Prefill To/Subject when opened from a CTA. Strip CR/LF so a value can't
+  // inject extra email headers.
+  const oneLine = (s) => String(s || '').replace(/[\r\n]+/g, ' ').trim();
+  const toLine = oneLine(prefill.to);
+  const subjLine = oneLine(prefill.subject);
+  const composeContent = `To: ${toLine}\nSubject: ${subjLine}\n---\n`;
   // NOTE: don't open the panel here. Creating the email-scoped chat below can
   // switch sessions, which tears the panel down — so an early open would mount
   // the pane, get closed, then injectFreshDoc remounts it: a visible flash
@@ -1331,7 +1343,7 @@ async function _composeNew() {
       body: JSON.stringify({
         session_id: sid,
         title: 'New Email',
-        content: 'To: \nSubject: \n---\n',
+        content: composeContent,
         language: 'email',
       }),
     });

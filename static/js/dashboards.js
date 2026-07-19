@@ -272,6 +272,8 @@ function _renderTiles() {
     return;
   }
 
+  _ctaRegistry.clear();
+  _ctaSeq = 0;
   grid.innerHTML = blocks.map(renderTile).join('');
   grid.querySelectorAll('[data-action]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -283,6 +285,13 @@ function _renderTiles() {
         case 'delete': deleteBlock(id); break;
         case 'download': window.open(`${API}/blocks/${id}/download`, '_blank'); break;
       }
+    });
+  });
+  grid.querySelectorAll('[data-cta-id]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const a = _ctaRegistry.get(btn.dataset.ctaId);
+      if (a) runCellAction(a);
     });
   });
   _installGridInteractions(grid);
@@ -445,6 +454,114 @@ function _iconBtn(action, id, title, svg) {
   return `<button class="memory-item-btn" data-action="${action}" data-id="${id}" title="${title}">${svg}</button>`;
 }
 
+// ── Rich cells + CTAs ────────────────────────────────────────────
+// A cell is a plain string, or a {text?, html?, actions?} object produced by
+// the widget's LLM (sanitized server-side — see src/dashboard_cells.py). URL
+// CTAs render as <a>; internal CTAs render as buttons whose action objects live
+// in _ctaRegistry (keyed by index), dispatched by runCellAction. Rebuilt on each
+// tile render.
+let _ctaSeq = 0;
+const _ctaRegistry = new Map();
+
+function _renderCell(cell) {
+  if (cell && typeof cell === 'object') return _renderRichCell(cell);
+  const v = cell == null ? '' : String(cell);
+  return `<td title="${escAttr(v)}">${esc(v)}</td>`;
+}
+
+function _renderRichCell(cell) {
+  const parts = [];
+  if (cell.date) parts.push(_fmtCellDate(cell.date, cell.format));
+  else if (cell.html) parts.push(cell.html);         // already nh3-sanitized server-side
+  else if (cell.text) parts.push(esc(cell.text));
+  for (const a of (cell.actions || [])) parts.push(_renderCta(a));
+  return `<td class="dash-cell-rich">${parts.join(' ') || ''}</td>`;
+}
+
+// Localize a {date, format} cell. format ∈ date|datetime|time|relative;
+// unparseable values fall back to the raw string. title carries the raw value.
+function _fmtCellDate(iso, format) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return `<span title="${escAttr(iso)}">${esc(iso)}</span>`;
+  let txt;
+  switch (format) {
+    case 'datetime': txt = d.toLocaleString(); break;
+    case 'time': txt = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); break;
+    case 'relative': txt = _relTime(d); break;
+    default: txt = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+  return `<span class="dash-cell-date" title="${escAttr(iso)}">${esc(txt)}</span>`;
+}
+
+function _relTime(d) {
+  const secs = Math.round((d.getTime() - Date.now()) / 1000);
+  const abs = Math.abs(secs);
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  const units = [['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60]];
+  for (const [unit, s] of units) {
+    if (abs >= s) return rtf.format(Math.round(secs / s), unit);
+  }
+  return rtf.format(secs, 'second');
+}
+
+function _renderCta(a) {
+  const label = esc(a.label || '');
+  if (a.type === 'url' && a.href) {
+    return `<a class="dash-cta" href="${escAttr(a.href)}" target="_blank" rel="noopener noreferrer nofollow">${label}</a>`;
+  }
+  const id = String(++_ctaSeq);
+  _ctaRegistry.set(id, a);
+  return `<button type="button" class="dash-cta" data-cta-id="${id}">${label}</button>`;
+}
+
+async function runCellAction(action) {
+  try {
+    switch (action.type) {
+      case 'url':
+        window.open(action.href, '_blank', 'noopener');
+        break;
+      case 'chat': {
+        closeDashboards();
+        document.getElementById('sidebar-new-chat-btn')?.click();
+        const inp = document.getElementById('message');
+        if (inp) {
+          inp.value = action.prompt || '';
+          inp.dispatchEvent(new Event('input', { bubbles: true }));
+          inp.focus();
+        }
+        break;
+      }
+      case 'navigate': {
+        const map = {
+          calendar: 'tool-calendar-btn', tasks: 'tool-tasks-btn', email: 'email-section-title',
+          memory: 'tool-memory-btn', notes: 'tool-notes-btn', compare: 'tool-compare-btn',
+          cookbook: 'tool-cookbook-btn', research: 'tool-research-btn', gallery: 'tool-gallery-btn',
+          library: 'tool-library-btn', dashboards: 'tool-dashboards-btn',
+        };
+        const id = map[action.target];
+        const elx = id && document.getElementById(id);
+        if (elx && action.target !== 'dashboards') { closeDashboards(); elx.click(); }
+        break;
+      }
+      case 'email_open': {
+        closeDashboards();
+        const m = await import('./emailInbox.js');
+        if (m.openReplyDraft) await m.openReplyDraft(action.uid, action.folder || 'INBOX', 'reply');
+        break;
+      }
+      case 'email_compose': {
+        closeDashboards();
+        const m = await import('./emailInbox.js');
+        if (m.openCompose) await m.openCompose({ to: action.to, subject: action.subject });
+        else document.getElementById('email-compose-btn')?.click();
+        break;
+      }
+    }
+  } catch (e) {
+    uiModule.showError(`Action failed: ${e.message}`);
+  }
+}
+
 function renderTile(b) {
   const pills = (b.sources || [])
     .map((sid) => sourceRegistry.find((s) => s.id === sid)?.label || sid)
@@ -455,7 +572,7 @@ function renderTile(b) {
   if (b.last_columns && b.last_columns.length) {
     const thead = `<thead><tr>${b.last_columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>`;
     const tbody = `<tbody>${(b.last_rows || [])
-      .map((row) => `<tr>${b.last_columns.map((c) => { const v = String(row[c] ?? ''); return `<td title="${esc(v)}">${esc(v)}</td>`; }).join('')}</tr>`)
+      .map((row) => `<tr>${b.last_columns.map((c) => _renderCell(row[c])).join('')}</tr>`)
       .join('')}</tbody>`;
     tableBody = `<div class="dash-tile-table-wrap"><table class="dash-tile-table">${thead}${tbody}</table></div>`;
   } else {
@@ -666,6 +783,12 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = String(s);
   return d.innerHTML;
+}
+
+// Attribute-context escaping: esc() covers &<>, but a quote in an href/attr
+// value would break out of the surrounding "..." — escape it too.
+function escAttr(s) {
+  return esc(s).replace(/"/g, '&quot;');
 }
 
 function fmtDate(iso) {

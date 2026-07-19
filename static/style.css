@@ -40712,3 +40712,28 @@ body.theme-frosted .modal {
 .dash-source-config-row:last-child { margin-bottom: 0; }
 .dash-source-config-row label { font-size: 11px; opacity: 0.6; width: 92px; flex-shrink: 0; margin: 0; }
 .dash-source-config-row input { flex: 1; }
+
+/* Rich cells + CTA buttons/links inside widget tables */
+.dash-cell-rich { white-space: normal; }
+.dash-cell-rich > * + * { margin-left: 4px; }
+.dash-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+}
+.dash-cta:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: var(--accent);
+}
+.dash-cell-rich a:not(.dash-cta) { color: var(--accent); }
