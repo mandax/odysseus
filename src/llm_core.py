@@ -2052,15 +2052,6 @@ async def llm_call_async(
                 client = _get_http_client()
                 r = await httpx_post_kimi_aware_async(client, target_url, h, json=payload, timeout=call_timeout)
             duration = time.time() - start
-            try:
-                from src import llm_console
-                llm_console.record_exchange(
-                    kind="call", url=target_url, model=model, workload=workload,
-                    messages=messages_copy, status=r.status_code, ok=r.is_success,
-                    response=r.text, duration_ms=int(duration * 1000),
-                )
-            except Exception:
-                pass
             if not r.is_success:
                 friendly = _format_upstream_error(r.status_code, r.text, target_url)
                 logger.warning(
@@ -2091,26 +2082,12 @@ async def llm_call_async(
             duration = time.time() - start
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
             logger.warning(f"LLM async connect to {target_url} failed after {duration:.2f}s: {e}{_tail}")
-            try:
-                from src import llm_console
-                llm_console.record_exchange(kind="call", url=target_url, model=model, workload=workload,
-                                            messages=messages_copy, error=f"connect: {e}",
-                                            duration_ms=int(duration * 1000))
-            except Exception:
-                pass
             if _cooled or attempt >= max_retries:
                 raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             duration = time.time() - start
             logger.warning(f"LLM async call attempt {attempt} failed after {duration:.2f}s: {e}")
-            try:
-                from src import llm_console
-                llm_console.record_exchange(kind="call", url=target_url, model=model, workload=workload,
-                                            messages=messages_copy, error=str(e),
-                                            duration_ms=int(duration * 1000))
-            except Exception:
-                pass
             if attempt >= max_retries:
                 raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
@@ -2132,31 +2109,21 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
                      tool_choice_none: bool = False, workload: str = "foreground"):
     target_url = _stream_target_url(url)
-    from src import llm_console
-    _console = llm_console.begin_stream(url=target_url, model=model, workload=workload, messages=messages)
-    _console_err = None
-    try:
-        async with _local_model_slot(target_url, model, workload):
-            async for chunk in _stream_llm_inner(
-                url,
-                model,
-                messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                headers=headers,
-                timeout=timeout,
-                prompt_type=prompt_type,
-                tools=tools,
-                session_id=session_id,
-                tool_choice_none=tool_choice_none,
-            ):
-                llm_console.observe_chunk(_console, chunk)
-                yield chunk
-    except BaseException as e:
-        _console_err = str(e) or e.__class__.__name__
-        raise
-    finally:
-        llm_console.finish_stream(_console, error=_console_err)
+    async with _local_model_slot(target_url, model, workload):
+        async for chunk in _stream_llm_inner(
+            url,
+            model,
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            headers=headers,
+            timeout=timeout,
+            prompt_type=prompt_type,
+            tools=tools,
+            session_id=session_id,
+            tool_choice_none=tool_choice_none,
+        ):
+            yield chunk
 
 
 async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,

@@ -24,7 +24,6 @@ import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js?v=20260630tasksactivity';
 import dashboardsModule from './js/dashboards.js';
-import llmConsoleModule from './js/llmConsole.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
@@ -1078,15 +1077,6 @@ function initializeEventListeners() {
     toolDashboardsBtn.addEventListener('click', () => {
       if (dashboardsModule) {
         dashboardsModule.isDashboardsOpen() ? dashboardsModule.closeDashboards() : dashboardsModule.openDashboards();
-      }
-    });
-  }
-
-  const toolLlmConsoleBtn = el('tool-llm-console-btn');
-  if (toolLlmConsoleBtn) {
-    toolLlmConsoleBtn.addEventListener('click', () => {
-      if (llmConsoleModule) {
-        llmConsoleModule.isLlmConsoleOpen() ? llmConsoleModule.closeLlmConsole() : llmConsoleModule.openLlmConsole();
       }
     });
   }

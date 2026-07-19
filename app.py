@@ -842,9 +842,6 @@ app.include_router(email_router)
 from routes.dashboard_routes import setup_dashboard_routes
 app.include_router(setup_dashboard_routes())
 
-from routes.llm_console_routes import setup_llm_console_routes
-app.include_router(setup_llm_console_routes())
-
 # Codex integration — HTTP surface for the Codex plugin/MCP bridge. Reuses
 # api_token scopes (todos:read|write, email:read|draft|send) so external
 # Codex sessions can only touch the data the user explicitly allowed. Mounted
