@@ -40712,3 +40712,98 @@ body.theme-frosted .modal {
 .dash-source-config-row:last-child { margin-bottom: 0; }
 .dash-source-config-row label { font-size: 11px; opacity: 0.6; width: 92px; flex-shrink: 0; margin: 0; }
 .dash-source-config-row input { flex: 1; }
+
+/* ── LLM Console (right-docked live traffic panel) ─────────────────── */
+.llm-console-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(480px, 94vw);
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+  animation: llm-console-slide 0.16s ease-out;
+}
+@keyframes llm-console-slide { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.llm-console-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.llm-console-title { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; }
+.llm-console-status { font-size: 10px; color: var(--fg-muted); transition: color 0.2s; }
+.llm-console-status.live { color: #3ba55d; }
+.llm-console-status.down { color: #d9822b; }
+
+.llm-console-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 4px 0;
+  font-size: 11.5px;
+  font-family: var(--mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+}
+.llm-console-empty { padding: 24px 14px; text-align: center; color: var(--fg-muted); font-size: 12px; }
+
+.llm-console-row { border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.llm-console-row.failed { background: color-mix(in srgb, #d9302c 8%, transparent); }
+.llm-console-row.expanded { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+
+.llm-console-row-head {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.llm-console-row-head:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.llm-console-time { color: var(--fg-muted); font-size: 10px; }
+.llm-console-badge {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border); color: var(--fg-muted);
+}
+.llm-console-badge.stream { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.llm-console-model { overflow: hidden; text-overflow: ellipsis; }
+.llm-console-host { color: var(--fg-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+.llm-console-status-code { font-weight: 600; font-size: 10.5px; }
+.llm-console-status-code.good { color: #3ba55d; }
+.llm-console-status-code.bad { color: #d9302c; }
+.llm-console-dur { color: var(--fg-muted); font-size: 10px; }
+
+.llm-console-detail { padding: 4px 12px 12px; }
+.llm-console-detail-sec { margin-top: 8px; }
+.llm-console-detail-label { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-muted); margin-bottom: 4px; }
+.llm-console-endpoint { margin: 0; font-size: 10.5px; color: var(--fg-muted); white-space: pre-wrap; word-break: break-all; }
+.llm-console-msg { margin-bottom: 6px; }
+.llm-console-role { display: inline-block; font-size: 9px; text-transform: uppercase; color: var(--accent); margin-bottom: 2px; }
+.llm-console-msg pre, .llm-console-resp {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  max-height: 260px; overflow: auto; font-size: 11px; line-height: 1.4;
+}
+.llm-console-resp.err { color: #d9302c; border-color: color-mix(in srgb, #d9302c 40%, var(--border)); }
+
+.llm-console-foot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px; border-top: 1px solid var(--border); flex-shrink: 0;
+  font-size: 10.5px; color: var(--fg-muted);
+}
+.llm-console-follow { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.llm-console-hint { margin-left: auto; opacity: 0.7; }
+
+@media (max-width: 640px) {
+  .llm-console-panel { width: 100vw; }
+  .llm-console-row-head { grid-template-columns: auto auto 1fr auto auto; }
+  .llm-console-dur { display: none; }
+}
