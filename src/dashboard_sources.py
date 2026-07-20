@@ -67,7 +67,15 @@ def normalize_imap_search(raw: str) -> str:
         start = i
         while i < n and not s[i].isspace() and s[i] not in ("'", '"'):
             i += 1
-        out.append((s[start:i], False))
+        token = s[start:i]
+        # IMAP ANDs criteria by whitespace — there is no comma separator. Users
+        # reasonably write "SINCE 01-Jan-2019, TO ..." (the old placeholder read
+        # like a comma-separated list), which makes servers fail at the comma
+        # with "expected CR". Drop a *trailing* comma only, so message sets that
+        # legitimately contain commas (UID 1,3,5) still work.
+        token = token.rstrip(",")
+        if token:
+            out.append((token, False))
 
     # Join with spaces, but keep parens tight: IMAP's grammar is
     # "(" search-key *(SP search-key) ")" — no space before ")".
@@ -210,7 +218,7 @@ SOURCE_REGISTRY = {
         "config_schema": [
             {"key": "folder", "label": "Folder", "type": "text", "default": "INBOX"},
             {"key": "search_filter", "label": "IMAP search filter", "type": "text",
-             "placeholder": 'e.g. UNSEEN, FROM "@example.com", SINCE 01-Jan-2024'},
+             "placeholder": 'space-separated, no commas — e.g. SINCE 01-Jan-2024 FROM "@example.com"'},
             {"key": "max_emails", "label": "Max emails", "type": "number", "default": 50},
         ],
     },

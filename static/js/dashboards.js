@@ -227,7 +227,7 @@ function renderGrid() {
   if (!body) return;
 
   const dashOptions = dashboards
-    .map((d) => `<option value="${esc(d.id)}" ${d.id === activeDashboardId ? 'selected' : ''}>${esc(d.name)}</option>`)
+    .map((d) => `<option value="${escAttr(d.id)}" ${d.id === activeDashboardId ? 'selected' : ''}>${esc(d.name)}</option>`)
     .join('');
 
   body.innerHTML = `
@@ -646,7 +646,7 @@ function modelOptionsHtml(items, selectedEpId, selectedUrl, selectedModel) {
       const val = `${m.epId}|||${m.url}|||${m.mid}`;
       const match = (m.epId && m.epId === selectedEpId) || (!m.epId && m.url === selectedUrl);
       const sel = match && m.mid === selectedModel ? 'selected' : '';
-      return `<option value="${esc(val)}" ${sel}>${esc(m.label)}</option>`;
+      return `<option value="${escAttr(val)}" ${sel}>${esc(m.label)}</option>`;
     }).join('');
     return `<optgroup label="${label}">${opts}</optgroup>`;
   };
@@ -672,7 +672,7 @@ async function renderEditor(block) {
       <button class="memory-toolbar-btn dash-editor-back" id="dash-editor-back"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="15 18 9 12 15 6"/></svg>Back</button>
       <form id="dash-block-form">
         <label class="task-form-label">Title</label>
-        <input class="task-form-input" name="title" value="${esc(block?.title || '')}" placeholder="e.g. Invoice tracker" required>
+        <input class="task-form-input" name="title" value="${escAttr(block?.title || '')}" placeholder="e.g. Invoice tracker" required>
 
         <label class="task-form-label">Prompt <span style="opacity:0.6;font-weight:normal;">(what to extract, and the columns you want)</span></label>
         <textarea class="task-form-input task-form-textarea" name="prompt" rows="4" required placeholder="e.g. List every invoice, with columns Date, Vendor, Amount, Due Date.">${esc(block?.prompt || '')}</textarea>
@@ -709,7 +709,7 @@ async function renderEditor(block) {
       const val = cfg[f.key] ?? f.default ?? '';
       return `<div class="dash-source-config-row">
         <label>${esc(f.label)}</label>
-        <input class="task-form-input" type="${f.type === 'number' ? 'number' : 'text'}" data-source="${sourceId}" data-key="${f.key}" value="${esc(val)}" placeholder="${esc(f.placeholder || '')}">
+        <input class="task-form-input" type="${f.type === 'number' ? 'number' : 'text'}" data-source="${escAttr(sourceId)}" data-key="${escAttr(f.key)}" value="${escAttr(val)}" placeholder="${escAttr(f.placeholder || '')}">
       </div>`;
     }).join('');
     return `<div class="dash-source-config"><div class="dash-source-config-title">${esc(entry.label)} settings</div>${rows}</div>`;
