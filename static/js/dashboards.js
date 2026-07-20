@@ -653,6 +653,24 @@ function modelOptionsHtml(items, selectedEpId, selectedUrl, selectedModel) {
   return `<option value="">Use background-task default</option>${optGroup('Remote / API', groups.api)}${optGroup('Local', groups.local)}`;
 }
 
+// Fill any datalist-backed config input with live options. Best-effort: a
+// failed/absent endpoint just leaves a plain free-text input.
+async function _populateOptionLists(root) {
+  for (const input of root.querySelectorAll('[data-options-url]')) {
+    const dl = document.getElementById(input.getAttribute('list'));
+    if (!dl) continue;
+    try {
+      const res = await fetch(input.dataset.optionsUrl, { credentials: 'same-origin' });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const opts = data[input.dataset.optionsKey] || [];
+      dl.innerHTML = opts.map((o) => `<option value="${escAttr(o)}"></option>`).join('');
+    } catch {
+      /* leave the input as plain text */
+    }
+  }
+}
+
 // ── Editor view (swaps into the same window body) ─────────────────
 async function renderEditor(block) {
   _view = 'editor';
@@ -707,16 +725,25 @@ async function renderEditor(block) {
     const cfg = sourcesConf[sourceId] || {};
     const rows = (entry.config_schema || []).map((f) => {
       const val = cfg[f.key] ?? f.default ?? '';
+      // A field with options_url stays a free-text input but offers the live
+      // values (e.g. real IMAP folders) as a datalist, so a custom name is
+      // never blocked and a fetch failure degrades to a plain input.
+      const listId = f.options_url ? `dash-opts-${sourceId}-${f.key}` : '';
+      const listAttrs = listId
+        ? ` list="${escAttr(listId)}" data-options-url="${escAttr(f.options_url)}" data-options-key="${escAttr(f.options_key || 'items')}"`
+        : '';
       return `<div class="dash-source-config-row">
         <label>${esc(f.label)}</label>
-        <input class="task-form-input" type="${f.type === 'number' ? 'number' : 'text'}" data-source="${escAttr(sourceId)}" data-key="${escAttr(f.key)}" value="${escAttr(val)}" placeholder="${escAttr(f.placeholder || '')}">
-      </div>`;
+        <input class="task-form-input" type="${f.type === 'number' ? 'number' : 'text'}" data-source="${escAttr(sourceId)}" data-key="${escAttr(f.key)}" value="${escAttr(val)}" placeholder="${escAttr(f.placeholder || '')}"${listAttrs}>
+        ${listId ? `<datalist id="${escAttr(listId)}"></datalist>` : ''}
+      </div>${f.hint ? `<div class="dash-source-config-hint">${esc(f.hint)}</div>` : ''}`;
     }).join('');
     return `<div class="dash-source-config"><div class="dash-source-config-title">${esc(entry.label)} settings</div>${rows}</div>`;
   };
   const syncConfigs = () => {
     const active = [...body.querySelectorAll('#dash-source-toggles .task-toggle-btn.active')].map((b) => b.dataset.sourceId);
     configsEl.innerHTML = active.map(renderSourceConfig).join('');
+    _populateOptionLists(configsEl);
   };
   syncConfigs();
 

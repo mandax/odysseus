@@ -40737,3 +40737,4 @@ body.theme-frosted .modal {
   border-color: var(--accent);
 }
 .dash-cell-rich a:not(.dash-cta) { color: var(--accent); }
+.dash-source-config-hint { font-size: 10px; opacity: 0.55; margin: -3px 0 6px 100px; }

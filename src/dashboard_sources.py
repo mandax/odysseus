@@ -216,7 +216,11 @@ SOURCE_REGISTRY = {
         "label": "Email",
         "fetch": fetch_email,
         "config_schema": [
-            {"key": "folder", "label": "Folder", "type": "text", "default": "INBOX"},
+            # options_url populates a datalist of the account's real IMAP folders —
+            # searching INBOX for mail you *sent* is an easy, silent mistake.
+            {"key": "folder", "label": "Folder", "type": "text", "default": "INBOX",
+             "options_url": "/api/email/folders", "options_key": "folders",
+             "hint": "Mail you sent lives in Sent, not INBOX"},
             {"key": "search_filter", "label": "IMAP search filter", "type": "text",
              "placeholder": 'space-separated, no commas — e.g. SINCE 01-Jan-2024 FROM "@example.com"'},
             {"key": "max_emails", "label": "Max emails", "type": "number", "default": 50},
