@@ -653,22 +653,63 @@ function modelOptionsHtml(items, selectedEpId, selectedUrl, selectedModel) {
   return `<option value="">Use background-task default</option>${optGroup('Remote / API', groups.api)}${optGroup('Local', groups.local)}`;
 }
 
-// Fill any datalist-backed config input with live options. Best-effort: a
-// failed/absent endpoint just leaves a plain free-text input.
+// Upgrade option-backed config inputs to a real <select> once their live
+// values load. Best-effort: a failed/empty endpoint leaves the plain text
+// input, so the field is never blocked on the network.
+const _CUSTOM_OPT = '__custom__';
+
 async function _populateOptionLists(root) {
   for (const input of root.querySelectorAll('[data-options-url]')) {
-    const dl = document.getElementById(input.getAttribute('list'));
-    if (!dl) continue;
+    let opts = [];
     try {
       const res = await fetch(input.dataset.optionsUrl, { credentials: 'same-origin' });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const opts = data[input.dataset.optionsKey] || [];
-      dl.innerHTML = opts.map((o) => `<option value="${escAttr(o)}"></option>`).join('');
+      if (res.ok) {
+        const data = await res.json();
+        opts = data[input.dataset.optionsKey] || [];
+      }
     } catch {
-      /* leave the input as plain text */
+      /* fall through — stays a text input */
     }
+    if (Array.isArray(opts) && opts.length) _upgradeToSelect(input, opts);
   }
+}
+
+function _upgradeToSelect(input, opts) {
+  const current = input.value || '';
+  const select = document.createElement('select');
+  select.className = 'task-form-input';
+  select.dataset.source = input.dataset.source;
+  select.dataset.key = input.dataset.key;
+
+  // Keep a value the endpoint didn't return (e.g. a hand-typed folder) so
+  // upgrading the control never silently rewrites the saved config.
+  const values = opts.map(String);
+  if (current && !values.includes(current)) values.unshift(current);
+
+  for (const v of values) {
+    const o = document.createElement('option');
+    o.value = v;
+    o.textContent = v;
+    if (v === current) o.selected = true;
+    select.appendChild(o);
+  }
+  const customOpt = document.createElement('option');
+  customOpt.value = _CUSTOM_OPT;
+  customOpt.textContent = 'Custom…';
+  select.appendChild(customOpt);
+
+  select.addEventListener('change', () => {
+    if (select.value !== _CUSTOM_OPT) return;
+    const text = document.createElement('input');
+    text.className = 'task-form-input';
+    text.type = 'text';
+    text.dataset.source = select.dataset.source;
+    text.dataset.key = select.dataset.key;
+    select.replaceWith(text);
+    text.focus();
+  });
+
+  input.replaceWith(select);
 }
 
 // ── Editor view (swaps into the same window body) ─────────────────
@@ -725,17 +766,17 @@ async function renderEditor(block) {
     const cfg = sourcesConf[sourceId] || {};
     const rows = (entry.config_schema || []).map((f) => {
       const val = cfg[f.key] ?? f.default ?? '';
-      // A field with options_url stays a free-text input but offers the live
-      // values (e.g. real IMAP folders) as a datalist, so a custom name is
-      // never blocked and a fetch failure degrades to a plain input.
-      const listId = f.options_url ? `dash-opts-${sourceId}-${f.key}` : '';
-      const listAttrs = listId
-        ? ` list="${escAttr(listId)}" data-options-url="${escAttr(f.options_url)}" data-options-key="${escAttr(f.options_key || 'items')}"`
+      // A field with options_url renders as a text input, then upgrades to a
+      // real <select> once its live values load (see _populateOptionLists) —
+      // a datalist hid its suggestions behind whatever was already typed. If
+      // the endpoint is empty/unreachable it stays a text input, so a custom
+      // value is never blocked.
+      const optAttrs = f.options_url
+        ? ` data-options-url="${escAttr(f.options_url)}" data-options-key="${escAttr(f.options_key || 'items')}"`
         : '';
       return `<div class="dash-source-config-row">
         <label>${esc(f.label)}</label>
-        <input class="task-form-input" type="${f.type === 'number' ? 'number' : 'text'}" data-source="${escAttr(sourceId)}" data-key="${escAttr(f.key)}" value="${escAttr(val)}" placeholder="${escAttr(f.placeholder || '')}"${listAttrs}>
-        ${listId ? `<datalist id="${escAttr(listId)}"></datalist>` : ''}
+        <input class="task-form-input" type="${f.type === 'number' ? 'number' : 'text'}" data-source="${escAttr(sourceId)}" data-key="${escAttr(f.key)}" value="${escAttr(val)}" placeholder="${escAttr(f.placeholder || '')}"${optAttrs}>
       </div>${f.hint ? `<div class="dash-source-config-hint">${esc(f.hint)}</div>` : ''}`;
     }).join('');
     return `<div class="dash-source-config"><div class="dash-source-config-title">${esc(entry.label)} settings</div>${rows}</div>`;
