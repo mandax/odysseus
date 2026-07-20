@@ -12,6 +12,7 @@ generic action list.
 import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -43,6 +44,14 @@ DEFAULT_BLOCK_H = 4
 # UI affordance to cancel those, and letting a background refresh finish is
 # the safer default.
 _RUNNING_RUNS: dict[str, asyncio.Task] = {}
+
+# "Run now" is synchronous, so its LLM budget has to fit inside the global
+# request budget (app.py REQUEST_HARD_TIMEOUT, default 60s). Otherwise a slow
+# run returns a bare 504 at the middleware while the server keeps working on an
+# abandoned request; sized just under it, the caller gets a real "LLM call timed
+# out" instead. Scheduled (cron) runs don't go through HTTP and aren't capped here.
+_REQUEST_BUDGET = float(os.getenv("REQUEST_HARD_TIMEOUT", "60"))
+_RUN_LLM_TIMEOUT = max(20.0, _REQUEST_BUDGET - 10)
 
 
 # ── Pydantic schemas ────────────────────────────────────────────────────
@@ -635,10 +644,10 @@ one."""
                 temperature=0.1,
                 max_tokens=8000,
             ),
-            timeout=120,
+            timeout=_RUN_LLM_TIMEOUT,
         )
     except asyncio.TimeoutError:
-        raise RuntimeError("LLM call timed out (120s)")
+        raise RuntimeError(f"LLM call timed out ({_RUN_LLM_TIMEOUT:.0f}s)")
     except Exception as e:
         raise RuntimeError(f"LLM call failed: {e}")
 
