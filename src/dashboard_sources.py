@@ -18,6 +18,66 @@ from datetime import datetime, timedelta, timezone
 logger = logging.getLogger(__name__)
 
 
+def _imap_quote(value: str) -> str:
+    """Quote a value as an RFC 3501 IMAP string."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def normalize_imap_search(raw: str) -> str:
+    """Rewrite a user-entered IMAP SEARCH filter into valid IMAP syntax.
+
+    IMAP strings must be double-quoted (RFC 3501) — single quotes are not string
+    delimiters, so a filter like ``TO '@example.com'`` is sent verbatim and the
+    server fails to parse it ("expected valid digit for number"). Rewrite every
+    single- or double-quoted run as a properly escaped double-quoted string and
+    pass bare atoms, keywords, and parens through untouched.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return "ALL"
+
+    # (token, is_quoted) — is_quoted marks emitted strings so paren-tightening
+    # below never rewrites punctuation that lives *inside* a quoted value.
+    out: list[tuple[str, bool]] = []
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c.isspace():
+            i += 1
+            continue
+        if c in ("'", '"'):
+            quote, i, buf = c, i + 1, []
+            while i < n:
+                ch = s[i]
+                if ch == "\\" and i + 1 < n:      # keep escaped char literally
+                    buf.append(s[i + 1])
+                    i += 2
+                    continue
+                if ch == quote:
+                    i += 1
+                    break
+                buf.append(ch)
+                i += 1
+            out.append((_imap_quote("".join(buf)), True))
+            continue
+        start = i
+        while i < n and not s[i].isspace() and s[i] not in ("'", '"'):
+            i += 1
+        out.append((s[start:i], False))
+
+    # Join with spaces, but keep parens tight: IMAP's grammar is
+    # "(" search-key *(SP search-key) ")" — no space before ")".
+    res = ""
+    for text, is_quoted in out:
+        if not res:
+            res = text
+        elif (not is_quoted and text.startswith(")")) or res.endswith("("):
+            res += text
+        else:
+            res += " " + text
+    return res or "ALL"
+
+
 async def fetch_email(owner: str, config: dict) -> list[dict]:
     """Fetch recent emails matching the block's IMAP filter."""
     import email as _email_mod
@@ -25,7 +85,7 @@ async def fetch_email(owner: str, config: dict) -> list[dict]:
 
     account_id = config.get("account_id") or None
     folder = config.get("folder") or "INBOX"
-    search_filter = config.get("search_filter") or "ALL"
+    search_filter = normalize_imap_search(config.get("search_filter") or "ALL")
     max_emails = int(config.get("max_emails") or 50)
 
     try:
@@ -39,9 +99,14 @@ async def fetch_email(owner: str, config: dict) -> list[dict]:
         if status != "OK":
             raise RuntimeError(f"Cannot open folder: {folder}")
 
-        status, data = conn.search(None, search_filter)
+        try:
+            status, data = conn.search(None, search_filter)
+        except Exception as e:
+            # imaplib raises on a BAD response — keep the server's own message
+            # and show the filter as actually sent so a bad one is debuggable.
+            raise RuntimeError(f"IMAP SEARCH rejected filter {search_filter}: {e}")
         if status != "OK":
-            raise RuntimeError(f"Search failed: {search_filter}")
+            raise RuntimeError(f"IMAP SEARCH failed for filter {search_filter}")
 
         uids = data[0].split()
         if not uids:
@@ -139,7 +204,7 @@ SOURCE_REGISTRY = {
         "config_schema": [
             {"key": "folder", "label": "Folder", "type": "text", "default": "INBOX"},
             {"key": "search_filter", "label": "IMAP search filter", "type": "text",
-             "placeholder": "e.g. UNSEEN, FROM '@example.com', SINCE 01-Jan-2024"},
+             "placeholder": 'e.g. UNSEEN, FROM "@example.com", SINCE 01-Jan-2024'},
             {"key": "max_emails", "label": "Max emails", "type": "number", "default": 50},
         ],
     },
