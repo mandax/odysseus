@@ -45,13 +45,11 @@ DEFAULT_BLOCK_H = 4
 # the safer default.
 _RUNNING_RUNS: dict[str, asyncio.Task] = {}
 
-# "Run now" is synchronous, so its LLM budget has to fit inside the global
-# request budget (app.py REQUEST_HARD_TIMEOUT, default 60s). Otherwise a slow
-# run returns a bare 504 at the middleware while the server keeps working on an
-# abandoned request; sized just under it, the caller gets a real "LLM call timed
-# out" instead. Scheduled (cron) runs don't go through HTTP and aren't capped here.
-_REQUEST_BUDGET = float(os.getenv("REQUEST_HARD_TIMEOUT", "60"))
-_RUN_LLM_TIMEOUT = max(20.0, _REQUEST_BUDGET - 10)
+# A widget run is an IMAP fetch plus one LLM call over a lot of email, so it can
+# legitimately run for minutes. /api/dashboards is exempt from the global
+# REQUEST_HARD_TIMEOUT (see app.py) precisely so this cap — not the middleware —
+# is what bounds it. The UI shows a "Running…" overlay with Cancel throughout.
+_RUN_LLM_TIMEOUT = float(os.getenv("DASHBOARD_RUN_TIMEOUT", "600"))
 
 
 # ── Pydantic schemas ────────────────────────────────────────────────────

@@ -181,6 +181,8 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
     "/api/memory/audit",    # retains own 120s LLM inactivity timeout
+    "/api/dashboards",      # widget "Run now" = IMAP fetch + LLM over many
+                            # emails; own DASHBOARD_RUN_TIMEOUT cap applies
 )
 
 
