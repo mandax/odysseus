@@ -32,7 +32,11 @@ def normalize_imap_search(raw: str) -> str:
     single- or double-quoted run as a properly escaped double-quoted string and
     pass bare atoms, keywords, and parens through untouched.
     """
-    s = (raw or "").strip()
+    # Strip control characters first. A stray CR/LF (easy to paste in) breaks the
+    # command mid-line — servers report "expected CR" — and would otherwise let a
+    # filter inject a second IMAP command. Replace with a space so tokens don't fuse.
+    import re
+    s = re.sub(r"[\x00-\x1f\x7f]", " ", raw or "").strip()
     if not s:
         return "ALL"
 
@@ -99,6 +103,8 @@ async def fetch_email(owner: str, config: dict) -> list[dict]:
         if status != "OK":
             raise RuntimeError(f"Cannot open folder: {folder}")
 
+        # repr() so hidden whitespace/control chars in a bad filter are visible.
+        logger.info("dashboard email search in %r: %r", folder, search_filter)
         try:
             status, data = conn.search(None, search_filter)
         except Exception as e:

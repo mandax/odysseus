@@ -563,6 +563,15 @@ async def run_block(block: DashboardBlock) -> dict:
     owner = block.owner or ""
     gathered = await gather_block_data(owner, block.sources or [], block.source_config or {})
 
+    # A source that blew up (bad IMAP filter, dead connection) must surface as a
+    # real error. Feeding {"error": ...} to the LLM just gets it paraphrased into
+    # a "summary", hiding the cause. Only hard-fail when nothing usable came back.
+    errors = [f"{sid}: {v['error']}" for sid, v in gathered.items()
+              if isinstance(v, dict) and v.get("error")]
+    usable = any(isinstance(v, list) and v for v in gathered.values())
+    if errors and not usable:
+        raise RuntimeError("; ".join(errors))
+
     if not any(gathered.values()):
         return {"rows": [], "columns": [], "summary": "No data from the selected sources."}
 
