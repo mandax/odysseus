@@ -23,6 +23,76 @@ def _imap_quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+_IMAP_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _clean_value(value) -> str:
+    """Strip control chars (CRLF would break/inject into the IMAP command)."""
+    import re
+    return re.sub(r"[\x00-\x1f\x7f]", " ", str(value or "")).strip()
+
+
+def _imap_date(value) -> str | None:
+    """Normalize a date to IMAP's dd-Mon-yyyy.
+
+    Accepts the HTML date input's YYYY-MM-DD as well as an already-IMAP
+    dd-Mon-yyyy. Returns None for anything unparseable, so a malformed date is
+    dropped rather than corrupting the whole SEARCH command.
+    """
+    import re
+    v = _clean_value(value)
+    if not v:
+        return None
+    m = re.fullmatch(r"(\d{1,2})-([A-Za-z]{3})-(\d{4})", v)
+    if m and m.group(2).title() in _IMAP_MONTHS:
+        return f"{int(m.group(1)):02d}-{m.group(2).title()}-{m.group(3)}"
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", v)
+    if m:
+        year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return f"{day:02d}-{_IMAP_MONTHS[month - 1]}-{year}"
+    return None
+
+
+def _truthy(value) -> bool:
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def build_imap_search(config: dict) -> str:
+    """Compile the widget's structured email filters into a valid IMAP SEARCH.
+
+    Users kept hitting IMAP's syntax rules by hand — single quotes aren't string
+    delimiters, criteria are space-separated (not comma), dates are dd-Mon-yyyy.
+    So the UI collects intent as plain fields and this builds the command, which
+    removes that whole class of error. `search_filter` remains an advanced
+    override for anything these fields can't express.
+    """
+    config = config or {}
+    raw = _clean_value(config.get("search_filter"))
+    if raw:
+        return normalize_imap_search(raw)
+
+    parts: list[str] = []
+    if _truthy(config.get("unread_only")):
+        parts.append("UNSEEN")
+    for key, imap_key in (("from_contains", "FROM"),
+                          ("to_contains", "TO"),
+                          ("subject_contains", "SUBJECT")):
+        value = _clean_value(config.get(key))
+        if value:
+            parts.append(f"{imap_key} {_imap_quote(value)}")
+    since = _imap_date(config.get("since"))
+    if since:
+        parts.append(f"SINCE {since}")
+    # IMAP BEFORE is exclusive of the given date.
+    until = _imap_date(config.get("until"))
+    if until:
+        parts.append(f"BEFORE {until}")
+
+    return " ".join(parts) or "ALL"
+
+
 def normalize_imap_search(raw: str) -> str:
     """Rewrite a user-entered IMAP SEARCH filter into valid IMAP syntax.
 
@@ -97,7 +167,7 @@ async def fetch_email(owner: str, config: dict) -> list[dict]:
 
     account_id = config.get("account_id") or None
     folder = config.get("folder") or "INBOX"
-    search_filter = normalize_imap_search(config.get("search_filter") or "ALL")
+    search_filter = build_imap_search(config)
     max_emails = int(config.get("max_emails") or 50)
 
     try:
@@ -221,9 +291,21 @@ SOURCE_REGISTRY = {
             {"key": "folder", "label": "Folder", "type": "text", "default": "INBOX",
              "options_url": "/api/email/folders", "options_key": "folders",
              "hint": "Mail you sent lives in Sent, not INBOX"},
-            {"key": "search_filter", "label": "IMAP search filter", "type": "text",
-             "placeholder": 'space-separated, no commas — e.g. SINCE 01-Jan-2024 FROM "@example.com"'},
+            # Structured filters — compiled to valid IMAP by build_imap_search()
+            # so nobody has to hand-write IMAP syntax.
+            {"key": "from_contains", "label": "From contains", "type": "text",
+             "placeholder": "e.g. @vendor.com"},
+            {"key": "to_contains", "label": "To contains", "type": "text",
+             "placeholder": "e.g. @accountants.com"},
+            {"key": "subject_contains", "label": "Subject contains", "type": "text",
+             "placeholder": "e.g. invoice"},
+            {"key": "since", "label": "Since", "type": "date"},
+            {"key": "until", "label": "Until", "type": "date"},
+            {"key": "unread_only", "label": "Unread only", "type": "checkbox"},
             {"key": "max_emails", "label": "Max emails", "type": "number", "default": 50},
+            {"key": "search_filter", "label": "Advanced filter", "type": "text",
+             "placeholder": 'raw IMAP — e.g. HEADER X-Label invoice',
+             "hint": "Optional. Overrides every field above."},
         ],
     },
     "calendar": {

@@ -40738,3 +40738,5 @@ body.theme-frosted .modal {
 }
 .dash-cell-rich a:not(.dash-cta) { color: var(--accent); }
 .dash-source-config-hint { font-size: 10px; opacity: 0.55; margin: -3px 0 6px 100px; }
+/* Checkboxes in source config shouldn't stretch like text inputs */
+.dash-source-config-row input[type="checkbox"] { flex: 0 0 auto; width: auto; margin: 0; }

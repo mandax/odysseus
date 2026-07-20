@@ -774,9 +774,14 @@ async function renderEditor(block) {
       const optAttrs = f.options_url
         ? ` data-options-url="${escAttr(f.options_url)}" data-options-key="${escAttr(f.options_key || 'items')}"`
         : '';
+      const type = ['number', 'date', 'checkbox'].includes(f.type) ? f.type : 'text';
+      // A checkbox carries its state in `checked`, not `value`.
+      const stateAttr = type === 'checkbox'
+        ? (val && val !== 'false' ? ' checked' : '')
+        : ` value="${escAttr(val)}"`;
       return `<div class="dash-source-config-row">
         <label>${esc(f.label)}</label>
-        <input class="task-form-input" type="${f.type === 'number' ? 'number' : 'text'}" data-source="${escAttr(sourceId)}" data-key="${escAttr(f.key)}" value="${escAttr(val)}" placeholder="${escAttr(f.placeholder || '')}"${optAttrs}>
+        <input class="task-form-input" type="${type}" data-source="${escAttr(sourceId)}" data-key="${escAttr(f.key)}"${stateAttr} placeholder="${escAttr(f.placeholder || '')}"${optAttrs}>
       </div>${f.hint ? `<div class="dash-source-config-hint">${esc(f.hint)}</div>` : ''}`;
     }).join('');
     return `<div class="dash-source-config"><div class="dash-source-config-title">${esc(entry.label)} settings</div>${rows}</div>`;
@@ -814,6 +819,10 @@ async function renderEditor(block) {
       sources.push(sid);
       const cfg = {};
       body.querySelectorAll(`[data-source="${sid}"]`).forEach((input) => {
+        if (input.type === 'checkbox') {
+          if (input.checked) cfg[input.dataset.key] = true;
+          return;
+        }
         if (input.value !== '') cfg[input.dataset.key] = input.value;
       });
       source_config[sid] = cfg;
